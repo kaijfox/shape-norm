@@ -12,23 +12,42 @@ from pathlib import Path
 import logging
 import os.path
 
-# Common defaults required by all datasets
-datasetdefaults = """
-root_path: null
-sessions:
-    session_name_1:
-        data: null"""
 
+def _find_files(filepaths, ext):
+    """Locate files with a given extension.
 
-# Common defaults to all keypoint datasets
-keypt_datasetdefaults = (
-    datasetdefaults
-    + """
-keypoint_names:
-- null
-keypoint_parents: null
-"""
-)
+    Parameters
+    ----------
+    filepaths : str, list of str, dict[str, str]
+        File paths or directory to search for files. If a string, will be
+        interpreted as a directory to search for files. If a dictionary, is
+        interpeted as a mapping from session names to file paths. If a list, is
+        treated like a dictionary with session names taken to be file basename.
+    Returns
+    -------
+    root_path : str
+        Common root path of found files.
+    filepaths : dict[str, str]
+        Mapping of session names to file paths."""
+    if isinstance(filepaths, str):
+        filepaths = [
+            filepaths + "/" + fn
+            for fn in os.listdir(filepaths)
+            if fn.endswith(ext)
+        ]
+    if not isinstance(filepaths, dict):
+        filepaths_dict = {}
+        for fp in filepaths:
+            root_name = os.path.basename(fp)[:-4]
+            name = root_name
+            i = 0
+            while name in filepaths_dict:
+                i += 1
+                name = f"{root_name}_{i}"
+            filepaths_dict[name] = fp
+        filepaths = filepaths_dict
+    filepaths = pt.tree_map(os.path.realpath, filepaths)
+    return _get_root_path(filepaths)
 
 
 def _get_root_path(paths: dict):
@@ -41,6 +60,57 @@ def _get_root_path(paths: dict):
     return (
         str(Path(*root[:-1])),
         {k: str(Path(*fp[len(root) - 1 :])) for k, fp in paths.items()},
+    )
+
+
+def _session_file_config(
+    filepaths,
+    keypoint_names,
+    ref_session,
+    use_keypoints=None,
+    exclude_keypoints=None,
+    keypoint_parents=None,
+    bodies=None,
+):
+    """Generate common config for datasets based on one session / file.
+
+    Parameters
+    ----------
+    keypoint_names : list of str
+        Ordered list of keypoint names as appearing in the files, or callable
+        which will be passed an example file and should return the keypoint
+        names.
+    """
+
+    root, filepaths = _find_files(filepaths, ".npy")
+
+    if callable(keypoint_names):
+        keypoint_names = keypoint_names(
+            os.path.join(root, list(filepaths.values())[0])
+        )
+
+    # Process other args: bodies, use/exclude_keypoints, skeleton
+    bodies = {n: None for n in filepaths} if bodies is None else bodies
+    if use_keypoints is None:
+        if exclude_keypoints is None:
+            use_keypoints = keypoint_names
+        else:
+            use_keypoints = [
+                kp for kp in keypoint_names if kp not in exclude_keypoints
+            ]
+    if not isinstance(keypoint_parents, dict):
+        keypoint_parents = dict(zip(use_keypoints, keypoint_parents))
+
+    return dict(
+        root_path=root,
+        ref_session=ref_session,
+        sessions={
+            sess_name: dict(path=fp, body=bodies[sess_name])
+            for sess_name, fp in filepaths.items()
+        },
+        keypoint_names=keypoint_names,
+        use_keypoints=use_keypoints,
+        viz=dict(armature=keypoint_parents),
     )
 
 
@@ -86,7 +156,7 @@ class DatasetLoader(object):
         Parameters
         ----------
         config : dict
-            Full config.
+            `dataset` sections of config.
         """
 
         cls._validate_config(config)
@@ -103,7 +173,7 @@ class DatasetLoader(object):
             data_path = os.path.join(config["root_path"], sess_meta["path"])
 
             if not meta_only:
-                data_arr = cls._load_keypoint_array(data_path)
+                data_arr = cls._load_keypoint_array(data_path, config)
                 if data_arr.shape[1] != len(config["keypoint_names"]):
                     logging.error(
                         f"SEVERE: loaded {data_arr.shape[1]} keypoints, but "
@@ -128,7 +198,7 @@ class DatasetLoader(object):
         )
 
     @staticmethod
-    def _load_keypoint_array(path):
+    def _load_keypoint_array(path, config):
         """Load a keypoint array from a file (abstract)"""
         raise NotImplementedError
 
@@ -158,8 +228,10 @@ class DatasetLoader(object):
 class raw_npy(DatasetLoader):
     """Collection of numpy array files containing keypoint data."""
 
+    type_name = "raw_npy"
+
     @staticmethod
-    def _load_keypoint_array(path):
+    def _load_keypoint_array(path, config):
         """Load a keypoint array from a .npy file."""
         return jnp.load(path)
 
@@ -211,55 +283,19 @@ class raw_npy(DatasetLoader):
             Feature reduction method to use. If None, will use 'locked_pts'.
         """
 
-        # Process filepaths:
-        # - if a directory, search for .npy files
-        # - if not a dict, assign names as basename of filepaths
-        # - expand relative path and extract root directory
-        if isinstance(filepaths, str):
-            filepaths = [
-                filepaths + "/" + fn
-                for fn in os.listdir(filepaths)
-                if fn.endswith(".npy")
-            ]
-        if not isinstance(filepaths, dict):
-            filepaths_dict = {}
-            for fp in filepaths:
-                root_name = os.path.basename(fp)[:-4]
-                name = root_name
-                i = 0
-                while name in filepaths_dict:
-                    i += 1
-                    name = f"{root_name}_{i}"
-                filepaths_dict[name] = fp
-            filepaths = filepaths_dict
-        filepaths = pt.tree_map(os.path.realpath, filepaths)
-        root, filepaths = _get_root_path(filepaths)
-
-        # Process other args: bodies, use/exclude_keypoints, skeleton
-        bodies = {n: None for n in filepaths} if bodies is None else bodies
-        if use_keypoints is None:
-            if exclude_keypoints is None:
-                use_keypoints = keypoint_names
-            else:
-                use_keypoints = [
-                    kp for kp in keypoint_names if kp not in exclude_keypoints
-                ]
-        if not isinstance(keypoint_parents, dict):
-            keypoint_parents = dict(zip(use_keypoints, keypoint_parents))
-
         # Form dataset-specific config
         dataset_detail = dict(
             type="raw_npy",
-            root_path=root,
-            ref_session=ref_session,
-            sessions={
-                sess_name: dict(path=fp, body=bodies[sess_name])
-                for sess_name, fp in filepaths.items()
-            },
-            keypoint_names=keypoint_names,
-            use_keypoints=use_keypoints,
             subsample=subsample,
-            viz=dict(armature=keypoint_parents),
+            **_session_file_config(
+                filepaths,
+                keypoint_names,
+                ref_session,
+                use_keypoints,
+                exclude_keypoints,
+                keypoint_parents,
+                bodies,
+            ),
         )
 
         # Write project config, including alignment and feature defaults
@@ -275,9 +311,77 @@ class raw_npy(DatasetLoader):
     default_features = locked_pts
 
 
-dataset_types = dict(
-    raw_npy=raw_npy,
-)
+class h5(DatasetLoader):
+    """Collection of HDF5 archives with data stored under a given key."""
+
+    type_name = "h5"
+
+    @staticmethod
+    def _load_keypoint_array(path, config):
+        """Load keypoint array from an HDF5 archive.
+
+        Parameters
+        ----------
+        path : str
+            Path to the HDF5 archive.
+        config : dict
+            `datasset` section of config.
+        """
+
+        import h5py
+
+        with h5py.File(path, "r") as f:
+            return jnp.array(f[config["h5_key"]])
+
+    @classmethod
+    def setup_project_config(
+        cls,
+        project,
+        filepaths,
+        h5_key,
+        keypoint_names,
+        ref_session,
+        use_keypoints=None,
+        exclude_keypoints=None,
+        keypoint_parents=None,
+        bodies=None,
+        subsample=None,
+        alignment_type=None,
+        feature_type=None,
+    ):
+        # Form dataset-specific config
+        dataset_detail = dict(
+            type="h5",
+            subsample=subsample,
+            h5_key=h5_key,
+            **_session_file_config(
+                filepaths,
+                keypoint_names,
+                ref_session,
+                use_keypoints,
+                exclude_keypoints,
+                keypoint_parents,
+                bodies,
+            ),
+        )
+
+        # Write project config, including alignment and feature defaults
+        return cls._write_project_config(
+            project, dataset_detail, alignment_type, feature_type
+        )
+
+    @staticmethod
+    def _validate_config(config):
+        DatasetLoader._validate_config(config)
+
+    default_alignment = sagittal
+    default_features = locked_pts
+
+
+dataset_types = {
+    raw_npy.type_name: raw_npy,
+    h5.type_name: h5,
+}
 
 
 def load_dataset(config):
