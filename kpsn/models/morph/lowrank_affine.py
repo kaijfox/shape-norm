@@ -54,8 +54,8 @@ def calibrate_base_model(project: Project, dataset: FeatureDataset, config):
 
     # set config and save calculated values
     config["n_dims"] = int(selected_ix)
-    config["upd_var_modes"] = float(mean_vars.mean())
-    config["upd_var_ofs"] = 0.1
+    config["upd_var_ofs"] = float(mean_vars.mean())
+    config["upd_var_modes"] = 0.1
 
     # save info about calibration for plotting later
     config["calibration_data"] = dict(

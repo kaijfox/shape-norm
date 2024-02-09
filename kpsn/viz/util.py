@@ -109,7 +109,10 @@ def plot_mouse_views(
 
 
 def select_frame_gallery(
-    keypoints, armature: Armature, return_ixs=False, as_list=False
+    keypoints,
+    armature: Armature,
+    return_ixs=False,
+    as_list=False,
 ):
     """
     Parameters

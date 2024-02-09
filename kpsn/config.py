@@ -7,6 +7,8 @@ from io import StringIO
 import logging
 from pathlib import Path
 import joblib as jl
+import jax.numpy as jnp
+import numpy as np
 
 
 def _create_yaml():
@@ -46,7 +48,7 @@ def dumps(yml_dict):
         return stream.getvalue()
 
 
-def save_project_config(path, config):
+def save_project_config(path, config, write_calib=False):
     """Save project config, separating yaml values and calibration data.
 
     Parameters
@@ -56,8 +58,10 @@ def save_project_config(path, config):
     if isinstance(path, str):
         path = Path(path)
 
-    calibration_data = _extract_calibration_data(config)
-    save_calibration_data(config["calibration_file"], calibration_data)
+    if write_calib:
+        calib = load_calibration_data(config["calibration_file"])
+        calib.update(_extract_calibration_data(config))
+        save_calibration_data(config["calibration_file"], calib)
 
     without_calib = _map_ordered(config, _drop_calibration_data)
     save_config(path, without_calib)
@@ -86,11 +90,21 @@ def load_project_config(path):
     with open(str(path), "r") as f:
         cfg = _yaml.load(f)
     # load calibration data and insert into config sections
-    calibration_data = load_calibration_data(cfg["calibration_file"])
-    for k, v in cfg.items():
-        if isinstance(v, Mapping) and k in calibration_data:
-            v["calibration_data"] = calibration_data[k]
+    cfg = _add_calibration_data(
+        cfg, load_calibration_data(cfg["calibration_file"])
+    )
     return cfg
+
+
+def _add_calibration_data(config, calibration_data):
+    """Add calibration data to a config."""
+    for k, v in config.items():
+        if isinstance(v, Mapping):
+            if k in calibration_data:
+                v["calibration_data"] = calibration_data[k]
+            else:
+                v["calibration_data"] = {}
+    return config
 
 
 def load_config(path):
@@ -147,10 +161,9 @@ def load_model_config(path):
     with open(model_cfg["project"], "r") as f:
         model_cfg.update(_yaml.load(f))
     # load calibration data and insert into config sections
-    calibration_data = load_calibration_data(model_cfg["calibration_file"])
-    for k, v in model_cfg.items():
-        if hasattr(v, "__setitem__") and k in calibration_data:
-            v["calibration_data"] = calibration_data[k]
+    model_cfg = _add_calibration_data(
+        model_cfg, load_calibration_data(model_cfg["calibration_file"])
+    )
     return model_cfg
 
 
@@ -310,5 +323,23 @@ def recursive_eq(a, b):
         if set(a.keys()) != set(b.keys()):
             return False
         return all(recursive_eq(a[k], b[k]) for k in a.keys())
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        if len(a) != len(b):
+            return False
+        return all(recursive_eq(x, y) for x, y in zip(a, b))
     else:
-        return a == b
+        if (
+            isinstance(a, jnp.ndarray)
+            or isinstance(a, np.ndarray)
+            or hasattr(a, "shape")
+        ) and (
+            isinstance(b, jnp.ndarray)
+            or isinstance(b, np.ndarray)
+            or hasattr(b, "shape")
+        ):
+            return (a.shape == b.shape) and jnp.allclose(a, b)
+        try:
+            return a == b
+        except:
+            logging.error(f"cannot compare {type(a)} and {type(b)}")
+            raise

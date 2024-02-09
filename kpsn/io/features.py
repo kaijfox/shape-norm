@@ -69,7 +69,6 @@ class reducer(object):
             kpt_names=dataset.keypoint_names
         )
         calib.update(cls._calibrate(dataset, config))
-        save_calibration_data(project.calibration_data(), calib)
         return config
 
     @staticmethod

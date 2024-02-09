@@ -73,7 +73,7 @@ class DatasetLoader(object):
             feature_type = cls.default_features.type_name
 
         full_cfg = construct_nondataset_project_config(
-            project.calibration_data(),
+            os.path.realpath(project.root() / "calibration.p"),
             dataset_detail,
             alignment_type,
             feature_type,

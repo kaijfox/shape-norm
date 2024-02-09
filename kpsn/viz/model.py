@@ -21,6 +21,7 @@ from ..models.instantiation import get_model
 from ..fitting.scans import merge_param_hist_with_hyperparams
 
 import jax.numpy as jnp
+from pathlib import Path
 import numpy as np
 import jax.numpy.linalg as jla
 import matplotlib.pyplot as plt
@@ -106,16 +107,16 @@ def lra_centroid_and_modes(checkpoint: dict, colors: colorset = None):
     if colors is None:
         colors = colorset.active
     params: LRAParams = checkpoint["params"].morph
-    config = checkpoint["config"]
-    dataset = load_dataset(config["dataset"])
+    config = _insert_calibration_data_to_checkpoint_config(checkpoint)
+    dataset, _ = load_and_prepare_dataset(config)
     armature = Armature.from_config(config["dataset"])
 
     fig, ax = plt.subplots(
         (params.n_dims * 2 + 2),
         params.n_bodies,
-        figsize=(2 * params.n_bodies, 1.5 * (params.n_dims * 2 + 2)),
-        sharex="row",
-        sharey="row",
+        figsize=(1.7 * params.n_bodies, 1.2 * (params.n_dims * 2 + 2)),
+        sharex=True,
+        sharey=True,
     )
 
     _inflate = lambda arr: inflate(arr, config["features"])
@@ -124,22 +125,44 @@ def lra_centroid_and_modes(checkpoint: dict, colors: colorset = None):
     )
 
     pal = colors.cts1(params.n_bodies)
+    neut = colors.neutral
+    sbtl = colors.subtle
     mode_scale = 10
-    for i_body, body in enumerate(dataset._bodies_inv.keys()):
-        ax[0, i_body].set_title(body)
-        for i_row, row_yaxis in enumerate([1, 2]):
+    for i_body in range(params.n_bodies):
+        ax[0, i_body].set_title(dataset._body_names[i_body])
+        for i_row, row_y in enumerate([2, 1]):
             # -- plot centroid
-            centroid = params.offset + params.offset_updates[i_body]
-            _plot(i_row, i_body, centroid, row_yaxis, pal[i_body])
+            ctr = params.offset + params.offset_updates[i_body]
+            ref = f"{dataset.ref_session}\n(ref)"
+            _plot(i_row, i_body, ctr, row_y, pal[i_body])
             ax[0, 0].set_ylabel("centroid")
+            if i_body != params.ref_body:
+                ref_ctr = params.offset + params.offset_updates[params.ref_body]
+                _plot(i_row, i_body, ref_ctr, row_y, sbtl, zorder=-3, label=ref)
 
+            # -- plot modes
             for i_mode in range(params.n_dims):
-                mode_rep = centroid + mode_scale * params.modes[i_body, i_mode]
-                # -- plot modes
+                mode = ctr + mode_scale * (
+                    params.modes[:, i_mode]
+                    + params.mode_updates[i_body, :, i_mode]
+                )
                 _ax = (2 + 2 * i_mode + i_row, i_body)
-                _plot(*_ax, centroid, row_yaxis, colors.subtle, zorder=-3)
-                _plot(*_ax, mode_rep, row_yaxis, pal[i_body])
-                ax[0, 0].set_ylabel("modes")
+                _plot(
+                    *_ax,
+                    ctr,
+                    row_y,
+                    neut,
+                    zorder=-3,
+                    label="centroid",
+                    line_kw={"lw": 0.5},
+                )
+                _plot(*_ax, mode, row_y, pal[i_body], label=f"mode {i_mode}")
+                if i_row == 0:
+                    ax[_ax[0], 0].set_ylabel(f"mode {i_mode}")
+
+    axes_off(ax)
+    for a in ax[::2, -1]:
+        legend(a)
 
     return fig
 
@@ -148,7 +171,7 @@ def lra_param_convergence(checkpoint: dict, colors: colorset = None):
     if colors is None:
         colors = colorset.active
 
-    cfg = checkpoint["config"]
+    cfg = _insert_calibration_data_to_checkpoint_config(checkpoint)
     _dataset, _ = load_and_prepare_dataset(cfg)
     model = get_model(cfg)
     param_hist = merge_param_hist_with_hyperparams(
@@ -191,7 +214,7 @@ def lra_param_convergence(checkpoint: dict, colors: colorset = None):
 def gmm_param_convergence(checkpoint: dict, colors: colorset = None):
     if colors is None:
         colors = colorset.active
-    cfg = checkpoint["config"]
+    cfg = _insert_calibration_data_to_checkpoint_config(checkpoint)
     _dataset, _ = load_and_prepare_dataset(cfg)
     model = get_model(cfg)
     param_hist = merge_param_hist_with_hyperparams(
@@ -260,7 +283,27 @@ def gmm_components(checkpoint: dict, colors: colorset = None):
     return means_fig, weights_fig
 
 
-def compare_nearest_frames(checkpoint: dict, colors: colorset = None):
+def _insert_calibration_data_to_checkpoint_config(checkpoint):
+    from .. import config
+
+    model_cfg = checkpoint["config"]
+    if "calibration_data" in checkpoint["config"]["morph"]:
+        return model_cfg
+    project = Project(Path(model_cfg["project"]).parent)
+
+    model_cfg["calibration_file"] = config.load_project_config(
+        project.main_config()
+    )["calibration_file"]
+    calib = config.load_calibration_data(model_cfg["calibration_file"])
+    model_cfg = config._add_calibration_data(
+        model_cfg, config.load_calibration_data(model_cfg["calibration_file"])
+    )
+    return model_cfg
+
+
+def compare_nearest_frames(
+    checkpoint: dict, colors: colorset = None, group_lines=False
+):
     """Nearest frames of each session to the reference session before and after
     morphing.
     """
@@ -269,7 +312,7 @@ def compare_nearest_frames(checkpoint: dict, colors: colorset = None):
 
     # set up model/dataset
     params: LRAParams = checkpoint["params"].morph
-    config = checkpoint["config"]
+    config = _insert_calibration_data_to_checkpoint_config(checkpoint)
     model = get_model(config)
     dataset, _ = load_and_prepare_dataset(config)
     _inflate = lambda arr: inflate(arr, config["features"])
@@ -299,6 +342,7 @@ def compare_nearest_frames(checkpoint: dict, colors: colorset = None):
         axs, pose, armature, color=color, label=label, **kw
     )
     pal = colors.cts1(dataset.n_sessions - 1)
+
     for i, ref_pose in enumerate(ref_poses):
         # iterate over all sessions except the reference session
         j = 0
@@ -310,8 +354,8 @@ def compare_nearest_frames(checkpoint: dict, colors: colorset = None):
             unmapped_nbr = unmapped_nbrs[s][i]
             mapped_nbr = mapped_nbrs[s][i]
             axs = ax[j + 1, 2 * i : 2 * (i + 1)]
-            _plot_mouse(ref_pose, colors.subtle, ref_s, line_kw={"lw": 0.5})
-            _plot_mouse(unmapped_nbr, colors.neutral, s, line_kw={"lw": 0.5})
+            _plot_mouse(ref_pose, colors.neutral, ref_s, line_kw={"lw": 0.5})
+            _plot_mouse(unmapped_nbr, colors.subtle, s, line_kw={"lw": 0.5})
             _plot_mouse(mapped_nbr, pal[j], "mapped")
             j += 1
         # plot reference poses in top two rows
@@ -321,6 +365,31 @@ def compare_nearest_frames(checkpoint: dict, colors: colorset = None):
     axes_off(ax)
     for a in ax[:, -1]:
         legend(a)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+
+    # plot lines above axes before their bounds change due to aspect = 1
+    if group_lines:
+        for i, ref_pose in enumerate(ref_poses):
+            ax0_lim = (ax[0, 2 * i].get_xlim(), ax[0, 2 * i].get_ylim())
+            ax1_lim = (ax[0, 2 * i + 1].get_xlim(), ax[0, 2 * i + 1].get_ylim())
+            ax0_topleft = fig.transFigure.inverted().transform(
+                ax[0, 2 * i].transData.transform([ax0_lim[0][0], ax1_lim[1][1]])
+            )
+            ax1_topright = fig.transFigure.inverted().transform(
+                ax[0, 2 * i + 1].transData.transform(
+                    [ax0_lim[0][1], ax1_lim[1][1]]
+                )
+            )
+            fig.add_artist(
+                plt.Line2D(
+                    [ax0_topleft[0] + 0.01, ax1_topright[0] - 0.01],
+                    [ax0_topleft[1] + 0.03, ax1_topright[1] + 0.03],
+                    lw=1,
+                    color=colors.neutral,
+                    # transform=fig.dpi_scale_trans,
+                )
+            )
 
     return fig
 

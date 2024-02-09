@@ -148,7 +148,7 @@ def plot_calibration(project: Project, config, colors):
     from ...viz.util import legend
 
     config = config["pose"]
-    calibration_data = load_calibration_data(project.calibration_data())["pose"]
+    calibration_data = config["calibration_data"]
 
     fig, ax = plt.subplots(figsize=(3, 2))
     ax.plot(

@@ -30,6 +30,7 @@ class Project:
         return self.project_dir / "models" / model_name / "model.yml"
 
     def calibration_data(self):
+        raise NotImplementedError
         return self.project_dir / "calibration.p"
 
 
