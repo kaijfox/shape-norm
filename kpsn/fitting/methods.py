@@ -278,7 +278,9 @@ def fit(
     return checkpoint
 
 
-def load_and_prepare_dataset(config: dict, modify=True, all_versions=False):
+def load_and_prepare_dataset(
+    config: dict, modify=True, all_versions=False, allow_subsample=True
+):
     """
     Parameters
     ----------
@@ -286,7 +288,9 @@ def load_and_prepare_dataset(config: dict, modify=True, all_versions=False):
         Full config dictionary.
     """
     dataset = {}
-    dataset["raw"] = load_dataset(config["dataset"])
+    dataset["raw"] = load_dataset(
+        config["dataset"], allow_subsample=allow_subsample
+    )
     dataset["aligned"], align_inverse = align(
         dataset["raw"], config["alignment"]
     )

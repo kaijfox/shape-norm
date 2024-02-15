@@ -161,7 +161,7 @@ class DatasetLoader(object):
         return save_config(project.main_config(), full_cfg)
 
     @classmethod
-    def load(cls, config, meta_only=False):
+    def load(cls, config, meta_only=False, allow_subsample=True):
         """
         Parameters
         ----------
@@ -197,7 +197,7 @@ class DatasetLoader(object):
             else:
                 data_arr = jnp.empty((0, len(kpt_ixs), 0))
 
-            if config["subsample"] is not None:
+            if config["subsample"] is not None and allow_subsample:
                 data_arr = data_arr[:: config["subsample"]]
             data[sess] = data_arr
 
@@ -410,7 +410,7 @@ dataset_types = {
 }
 
 
-def load_dataset(config):
+def load_dataset(config, allow_subsample=True):
     """Load a dataset based on a config dictionary.
 
     Parameters
@@ -421,7 +421,9 @@ def load_dataset(config):
     dset_type = config["type"]
     if dset_type not in dataset_types:
         raise NotImplementedError(f"Unknown dataset type: {dset_type}")
-    return dataset_types[dset_type].load(config)
+    return dataset_types[dset_type].load(
+        config, allow_subsample=allow_subsample
+    )
 
 
 def construct_nondataset_project_config(

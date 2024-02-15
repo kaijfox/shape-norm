@@ -8,6 +8,14 @@ from .util import (
     axes_off,
     flat_grid,
 )
+from .videos import (
+    load_videos,
+    _egocentric_crop,
+    _overlay_keypoints,
+    _centroid_headings_and_sizes,
+    _egocentric_window_align,
+)
+from ..io.utils import stack_dict
 from ..models.morph.lowrank_affine import LRAParams, model as lra_model
 from .styles import colorset
 from ..io.loaders import load_dataset
@@ -25,7 +33,9 @@ from pathlib import Path
 import numpy as np
 import jax.numpy.linalg as jla
 import matplotlib.pyplot as plt
+from matplotlib import colors as plt_colors
 import seaborn as sns
+import cv2
 
 
 def report_plots(checkpoint, n_col=5, colors: colorset = None):
@@ -410,3 +420,132 @@ def plot_calibration(project: Project, config: dict, colors=None):
         "morph": model.morph.plot_calibration(project, config, colors),
         "pose": model.pose.plot_calibration(project, config, colors),
     }
+
+
+def display_clip_across_bodies(
+    checkpoint,
+    source_session,
+    start,
+    end,
+    window_size,
+    n_cols=3,
+    fixed_crop=False,
+    subject_size=0.667,
+    colors: colorset = None,
+    font_scale=0.5,
+):
+    """Display a video clip across all bodies in a session."""
+
+    if colors is None:
+        colors = colorset.active
+
+    params: LRAParams = checkpoint["params"].morph
+    config = _insert_calibration_data_to_checkpoint_config(checkpoint)
+    model = get_model(config)
+    dataset, _ = load_and_prepare_dataset(config, allow_subsample=False)
+    _inflate = lambda arr: inflate(arr, config["features"])
+    armature = Armature.from_config(config["dataset"])
+
+    video = load_videos(config["dataset"], start, end, [source_session])[
+        source_session
+    ]
+    frames = video["frames"]
+    keypts_video = video["keypoints"]
+    c, h, s = _centroid_headings_and_sizes(keypts_video)
+
+    video_tile = _egocentric_crop(
+        frames, c, h, s.max() * 2 / subject_size, window_size, fixed_crop
+    )
+
+    # create a dataset with a session for each body, all containing identical
+    # data: the clip from the source session
+    ref_body = dataset.sess_bodies[source_session]
+    ref_kpt_frames = dataset.get_session(source_session)[start:end]
+    new_data, slices = stack_dict({b: ref_kpt_frames for b in dataset.bodies})
+    new_bodies = {s: ref_body for s in dataset.sessions}
+    short_data = dataset.with_sessions(new_data, slices, new_bodies, ref_body)
+    # map each session onto the body for which the session is named
+    mapped = apply_bodies(
+        model.morph,
+        params,
+        short_data,
+        {b: b for b in dataset.bodies},
+    )
+
+    inflated_ref = _inflate(dataset.get_session(source_session))
+    xaxis = 0
+    mapped_tiles = {}
+    for view_name, yaxis in zip(["top", "side"], [2, 1]):
+
+        # align the reference an egocentric view and record params of the view
+        # to align the mapped sessions as well
+        rc, rh, rs = _centroid_headings_and_sizes(
+            inflated_ref[..., [xaxis, yaxis]]
+        )
+        if view_name == "side":
+            rh *= 0  # do not rotate side view
+        keypt_scale = rs.max() * 2 / subject_size
+        ref_kpt_frames = _egocentric_window_align(
+            inflated_ref[..., [xaxis, yaxis]],
+            rc,
+            rh,
+            keypt_scale,
+            window_size,
+            fixed_crop,
+        )
+        # plot the reference session keypoints
+        backdrop = np.zeros_like(video_tile)
+        ref_tile = _overlay_keypoints(
+            backdrop,
+            ref_kpt_frames,
+            armature,
+            keypoint_colors=plt_colors.to_rgb(colors.subtle),
+        )
+        pal = colors.cts1(dataset.n_bodies)
+        mapped_tiles[view_name] = {}
+        # align mapped sessions to the egocentric view from above and overlay
+        # atop the reference session keypoints
+        for i, b in enumerate(dataset.bodies):
+            inflated = _egocentric_window_align(
+                _inflate(mapped.get_session(b))[..., [xaxis, yaxis]],
+                rc,
+                rh,
+                keypt_scale,
+                window_size,
+                fixed_crop,
+            )
+            mapped_tiles[view_name][b] = _overlay_keypoints(
+                ref_tile, inflated, armature, keypoint_colors=pal[i], copy=True
+            )
+
+    # stack the various tiles together
+    n_rows = np.ceil(dataset.n_bodies / n_cols)
+    tiles = np.zeros([n_rows, 2 * n_cols + 1, window_size, window_size])
+    tiles[0, 0] = video_tile
+    header_height = 20
+    headers = np.zeros([n_rows, 2 * n_cols + 1, header_height, window_size])
+    for i, b in enumerate(dataset.bodies):
+        # force reference body to be in the top left corner
+        j = i + 1
+        if b == ref_body:
+            j = 0
+        r, c = (i // n_cols, i % n_cols)
+        c = 2 * c + 1
+        tiles[r, c] = mapped_tiles["top"][b]
+        tiles[r, c + 1] = mapped_tiles["side"][b]
+        headers[r, c] = cv2.putText(
+            headers[r, c, 0, 0],
+            b,
+            (10, header_height // 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    # join tiles and headers into one large video
+    tiled_vid = np.concatenate(
+        np.concatenate(np.concatenate([tiles, headers], axis=2), axis=-2),
+        axis=-1,
+    )
