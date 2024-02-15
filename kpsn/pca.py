@@ -55,7 +55,7 @@ class PCAData(NamedTuple):
             or row vectors to right-multiply by V'
         CV' = X => C = XV = USV'V = US
         For a different matrix of observations, we do the same:
-        CV' = A => AV
+        CV' = A => C = AV
         """
         return arr @ self.v
     

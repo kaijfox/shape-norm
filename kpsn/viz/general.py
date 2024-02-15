@@ -76,7 +76,7 @@ def pose_gallery(config: dict, colors: colorset = None):
     return fig
 
 
-def scree(cumulative_variance, selected_ix, tgt_variance, colors=None):
+def scree(cumulative_variance, selected_ix, tgt_variance, colors=None, ax=None):
     """Plot calibration data.
 
     Parameters
@@ -88,15 +88,19 @@ def scree(cumulative_variance, selected_ix, tgt_variance, colors=None):
     if colors is None:
         colors = colorset.active
 
-    fig, ax = plt.subplots(figsize=(3.3, 2))
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(3.3, 2))
+    else:
+        fig = ax.figure
 
-    ax.axhline(
-        tgt_variance,
-        color=colors.subtle,
-        linestyle="--",
-        lw=1,
-        label="Target\nvariance",
-    )
+    if tgt_variance is not None:
+        ax.axhline(
+            tgt_variance,
+            color=colors.subtle,
+            linestyle="--",
+            lw=1,
+            label="Target\nvariance",
+        )
     ax.axvline(
         selected_ix,
         color=colors.subtle,
@@ -104,13 +108,14 @@ def scree(cumulative_variance, selected_ix, tgt_variance, colors=None):
         label="Selected\ndimension",
     )
     ax.plot(cumulative_variance, color=colors.C[0])
-    ax.plot(
-        [selected_ix],
-        [cumulative_variance[selected_ix]],
-        "o",
-        color=colors.C[0],
-        ms=3,
-    )
+    if cumulative_variance.ndim == 1:
+        ax.plot(
+            [selected_ix],
+            [cumulative_variance[selected_ix]],
+            "o",
+            color=colors.C[0],
+            ms=3,
+        )
     ax.set_xticks([selected_ix])
     ax.set_xticklabels([selected_ix])
     ax.set_ylabel("Variance\nexplained")

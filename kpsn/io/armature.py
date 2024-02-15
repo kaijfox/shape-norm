@@ -45,6 +45,8 @@ class Armature(NamedTuple):
     keypoint_names: bidict  # <str>
     bones: jnp.ndarray  # <int>
     root: str
+    anterior: str
+    posterior: str
 
     @staticmethod
     def from_config(config):
@@ -66,7 +68,13 @@ class Armature(NamedTuple):
                 if parent is not None
             ]
         )
-        return Armature(names, _toposort(bones, names.inverse[root]), root)
+        return Armature(
+            names,
+            _toposort(bones, names.inverse[root]),
+            root,
+            config["anterior"],
+            config["posterior"],
+        )
 
     @property
     def keypt_by_name(self):

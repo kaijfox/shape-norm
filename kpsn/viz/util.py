@@ -124,21 +124,22 @@ def select_frame_gallery(
     """
 
     nframe = len(keypoints)
-    head_ht = jnp.argsort(keypoints[:, armature.keypt_by_name["head"], 2])
-    head_ln = jnp.argsort(keypoints[:, armature.keypt_by_name["head"], 0])
-    back_wd = jnp.argsort(keypoints[:, armature.keypt_by_name["back"], 1])
+    anterior_kp = armature.keypt_by_name[armature.anterior]
+    ht = jnp.argsort(keypoints[:, anterior_kp, 2])
+    ln = jnp.argsort(keypoints[:, anterior_kp, 0])
+    wd = jnp.argsort(keypoints[:, anterior_kp, 1])
     if return_ixs:
         quantile = lambda ix_arr, pct: ix_arr[int(pct * nframe)]
     else:
         quantile = lambda ix_arr, pct: keypoints[ix_arr[int(pct * nframe)]]
 
     poses = {
-        "high": quantile(head_ht, 0.1),
-        "low": quantile(head_ht, 0.9),
-        "extend": quantile(head_ln, 0.2),
-        "scrunch": quantile(head_ln, 0.9),
-        "left": quantile(back_wd, 0.2),
-        "right": quantile(back_wd, 0.8),
+        "high": quantile(ht, 0.1),
+        "low": quantile(ht, 0.9),
+        "extend": quantile(ln, 0.2),
+        "scrunch": quantile(ln, 0.9),
+        "left": quantile(wd, 0.2),
+        "right": quantile(wd, 0.8),
     }
     if as_list:
         poses = jnp.stack(list(poses.values()))

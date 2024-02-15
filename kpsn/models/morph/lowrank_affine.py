@@ -25,7 +25,9 @@ defaults = dict(
 )
 
 
-def calibrate_base_model(project: Project, dataset: FeatureDataset, config):
+def calibrate_base_model(
+    project: Project, dataset: FeatureDataset, config, n_dims=None
+):
     """
     Calibrate a morph model from a dataset.
 
@@ -42,7 +44,10 @@ def calibrate_base_model(project: Project, dataset: FeatureDataset, config):
     init_pts = dataset.get_session(dataset.ref_session)
     arr = fit_with_center(init_pts)._pcadata.variances()
     scree = jnp.cumsum(arr) / arr.sum()
-    selected_ix = jnp.argmax(scree > config["calibration"]["tgt_variance"])
+    if n_dims is None:
+        selected_ix = jnp.argmax(scree > config["calibration"]["tgt_variance"])
+    else:
+        selected_ix = n_dims - 1
 
     # variance of each component in feature space
     mean_vars = jnp.var(
@@ -53,7 +58,7 @@ def calibrate_base_model(project: Project, dataset: FeatureDataset, config):
     )
 
     # set config and save calculated values
-    config["n_dims"] = int(selected_ix)
+    config["n_dims"] = int(selected_ix) + 1
     config["upd_var_ofs"] = float(mean_vars.mean())
     config["upd_var_modes"] = 0.1
 

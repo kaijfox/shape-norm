@@ -70,6 +70,9 @@ def _session_file_config(
     use_keypoints=None,
     exclude_keypoints=None,
     keypoint_parents=None,
+    anterior=None,
+    posterior=None,
+    invert_axes=None,
     bodies=None,
 ):
     """Generate common config for datasets based on one session / file.
@@ -110,6 +113,13 @@ def _session_file_config(
         },
         keypoint_names=keypoint_names,
         use_keypoints=use_keypoints,
+        anterior=anterior,
+        posterior=posterior,
+        invert_axes=(
+            (invert_axes,)
+            if isinstance(invert_axes, int) and invert_axes is not None
+            else invert_axes
+        ),
         viz=dict(armature=keypoint_parents),
     )
 
@@ -180,6 +190,10 @@ class DatasetLoader(object):
                         f"expected {len(config['keypoint_names'])} from {data_path}."
                     )
                 data_arr = data_arr[:, kpt_ixs]
+                if config["invert_axes"] is not None:
+                    data_arr.at[:, :, config["invert_axes"]].set(
+                        -data_arr[:, :, config["invert_axes"]]
+                    )
             else:
                 data_arr = jnp.empty((0, len(kpt_ixs), 0))
 
@@ -246,6 +260,9 @@ class raw_npy(DatasetLoader):
         exclude_keypoints=None,
         keypoint_parents=None,
         bodies=None,
+        anterior=None,
+        posterior=None,
+        invert_axes=None,
         subsample=None,
         alignment_type=None,
         feature_type=None,
@@ -294,6 +311,9 @@ class raw_npy(DatasetLoader):
                 use_keypoints,
                 exclude_keypoints,
                 keypoint_parents,
+                anterior,
+                posterior,
+                invert_axes,
                 bodies,
             ),
         )
@@ -347,6 +367,9 @@ class h5(DatasetLoader):
         bodies=None,
         subsample=None,
         alignment_type=None,
+        anterior=None,
+        posterior=None,
+        invert_axes=None,
         feature_type=None,
     ):
         # Form dataset-specific config
@@ -361,6 +384,9 @@ class h5(DatasetLoader):
                 use_keypoints,
                 exclude_keypoints,
                 keypoint_parents,
+                anterior,
+                posterior,
+                invert_axes,
                 bodies,
             ),
         )

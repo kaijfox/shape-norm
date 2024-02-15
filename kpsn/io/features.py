@@ -1,8 +1,11 @@
-import jax.numpy as jnp
 from ..io.dataset import KeypointDataset, FeatureDataset, Dataset
 from ..project.paths import Project
 from ..config import load_calibration_data, save_calibration_data
 from ..pca import fit_with_center, CenteredPCA
+
+import jax.numpy as jnp
+import jax.numpy.linalg as jla
+import matplotlib.pyplot as plt
 
 
 class reducer(object):
@@ -56,7 +59,9 @@ class reducer(object):
         raise NotImplementedError
 
     @classmethod
-    def calibrate(cls, project: Project, dataset: KeypointDataset, config):
+    def calibrate(
+        cls, project: Project, dataset: KeypointDataset, config, **kwargs
+    ):
         """Calibrate feature extraction for a dataset.
 
         Parameters
@@ -68,7 +73,7 @@ class reducer(object):
         calib = config["features"]["calibration_data"] = dict(
             kpt_names=dataset.keypoint_names
         )
-        calib.update(cls._calibrate(dataset, config))
+        calib.update(cls._calibrate(dataset, config, **kwargs))
         return config
 
     @staticmethod
@@ -176,25 +181,63 @@ class pcs(reducer):
         kpt_shape = (config["n_kpts"], flat_arr.shape[-1] // config["n_kpts"])
         return flat_arr.reshape(arr.shape[:-1] + kpt_shape)
 
+    @classmethod
+    def calibrate(
+        cls, project: Project, dataset: KeypointDataset, config, n_dims=None
+    ):
+        """Calibrate feature extraction for a dataset.
+
+        Parameters
+        ----------
+        dataset : KeypointDataset
+        config : dict
+            Full config
+        n_dims : int
+            Number of dimensions to select, or None to choose a number of
+            dimensions explaining `tgt_variance` of the variance as specified in
+            the config.
+        """
+        return super().calibrate(project, dataset, config, n_dims=n_dims)
+
     @staticmethod
-    def _calibrate(dataset: KeypointDataset, config: dict):
+    def _calibrate(dataset: KeypointDataset, config: dict, n_dims=None):
         """Calibrate feature extraction for a dataset."""
         config = config["features"]
         # fit PCA
         flat_data = dataset.as_features()
         pcs = fit_with_center(flat_data.data)
 
-        # choose number of dimensions in reduced data
+        # -- choose number of dimensions in reduced data
         scree = (
             jnp.cumsum(pcs._pcadata.variances())
             / pcs._pcadata.variances().sum()
         )
-        selected_ix = jnp.argmax(scree > config["calibration"]["tgt_variance"])
+        if n_dims is None:
+            selected_ix = jnp.argmax(
+                scree > config["calibration"]["tgt_variance"]
+            )
+        else:
+            selected_ix = n_dims - 1
+
+        # -- keypoint errors resulting from PCA reduction
+        flat_arr = flat_data.data - pcs._center[None]
+        coords = pcs._pcadata.coords(flat_arr)
+        # (n_samples, n_dims, n_dims), sum over axis 1 (aka -2) gives flat_data
+        reconst_parts = coords[..., None] * pcs._pcadata.pcs()[None, ...]
+        cum_reconst = jnp.cumsum(reconst_parts, axis=-2)
+        kpt_shape = (
+            config["n_kpts"],
+            flat_arr.shape[-1] // config["n_kpts"],
+        )
+        cum_dists = cum_reconst - flat_arr[..., None, :]
+        errs = jla.norm(cum_dists.reshape(flat_arr.shape + kpt_shape), axis=-1)
 
         # outputs to main config and calibration_data
-        config["n_dims"] = int(selected_ix + 1)
+        config["n_dims"] = int(selected_ix) + 1
         config["n_kpts"] = dataset.n_points
-        return dict(pcs=pcs._pcadata, center=pcs._center)
+        return dict(
+            pcs=pcs._pcadata, center=pcs._center, mean_errs=errs.mean(axis=0)
+        )
 
     @staticmethod
     def plot_calibration(project: Project, config: dict, colors=None):
@@ -208,10 +251,27 @@ class pcs(reducer):
             jnp.cumsum(pcs._pcadata.variances())
             / pcs._pcadata.variances().sum()
         )
-        fig, ax = scree(
-            cumsum, config["n_dims"], config["calibration"]["tgt_variance"]
+
+        fig, ax = plt.subplots(1, 2, figsize=(6, 2.0))
+
+        # variance explained
+        scree(
+            cumsum,
+            config["n_dims"],
+            config["calibration"]["tgt_variance"],
+            ax=ax[0],
         )
-        ax.set_title("Feature reduction PCA scree")
+        ax[0].set_title("Feature reduction: PCA scree")
+
+        # variance explained
+        scree(
+            calib["mean_errs"],
+            config["n_dims"],
+            None,
+            ax=ax[1],
+        )
+        ax[1].set_title("Keypoint reconstruction")
+        ax[1].set_ylabel("Euclidean dist.")
         return fig
 
     @staticmethod
