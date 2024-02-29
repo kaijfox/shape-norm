@@ -22,10 +22,6 @@ from ..logging import ArrayTrace, _keystr
 from ..io.utils import split_sessions
 
 
-from line_profiler import LineProfiler
-profiler = LineProfiler()
-
-
 def fit_model(model, dataset, config):
     """Fit a model to a dataset.
 
@@ -62,8 +58,8 @@ def _save_checkpoint(save_dir, contents):
     save_dir.mkdir(exist_ok=True)
     jl.dump(contents, checkpoint_file)
     return contents
+    
 
-@profiler
 def _check_should_stop_early(loss_hist, step_i, tol, stop_window):
     """
     Check for median decrease in loss that is worse than `tol`.
@@ -235,7 +231,7 @@ def construct_jitted_estep(model: JointModel):
 
     return step
 
-@profiler
+        
 def _mstep(
     init_params: tuple,
     static_params: tuple,
@@ -389,222 +385,6 @@ def _initialize_or_continue_metadata(
     return meta
 
 
-def unprofiled_iterate_em(
-    model: JointModel,
-    init_params: JointModelParams,
-    observations: FeatureDataset,
-    config: dict,
-    meta: dict = None,
-    first_step: int = 0,
-    checkpoint_dir: Path = None,
-    checkpoint_every: int = 10,
-    checkpoint_extra=dict(),
-    log_every: int = -1,
-    progress=False,
-    return_mstep_losses=True,
-    return_param_hist="trace",
-    return_reports=True,
-) -> Tuple[
-    Float[Array, "n_steps"],
-    JointModelParams,
-    Float[Array, "n_steps mstep_n_steps"],
-    ArrayTrace,
-]:
-    """
-    Perform EM on a JointModel.
-    """
-
-    n_steps = config["n_steps"]
-
-    static, hyper, curr_trained = init_params.by_type()
-    iter = (
-        range(first_step, n_steps)
-        if not progress
-        else tqdm.trange(first_step, n_steps)
-    )
-
-    # set up learning rate schedule
-    learning_rate = config["learning_rate"]
-    if isinstance(learning_rate, int) or isinstance(learning_rate, float):
-        learning_rate = dict(kind="const", lr=learning_rate)
-
-    if config["scale_lr"]:
-        if config["mstep"]["batch_size"] is not None:
-            step_data_size = config["mstep"]["batch_size"]
-        elif config["batch_size"] is not None:
-            step_data_size = config["batch_size"]
-        else:
-            step_data_size = len(observations)
-        logging.info(
-            "Adjusting learning rate:"
-            f"{learning_rate['lr']} -> {learning_rate['lr'] / step_data_size}"
-        )
-    logging.info(f"Loading LR schedule: {learning_rate['kind']}")
-
-    lr_sched = functools.partial(
-        rates[learning_rate["kind"]],
-        n_steps=n_steps,
-        n_samp=step_data_size,
-        **learning_rate,
-    )
-
-    optimizer = optax.inject_hyperparams(optax.adam)(
-        learning_rate=learning_rate["lr"]
-    )
-    opt_state = optimizer.init(curr_trained)
-
-    # set up metadata dictionary if not provided
-    meta = _initialize_or_continue_metadata(
-        meta,
-        config,
-        n_steps,
-        curr_trained,
-        opt_state,
-        return_param_hist,
-        return_mstep_losses,
-        return_reports,
-    )
-
-    # set up optimizer and jitted steps
-    pt_obs = PytreeDataset.from_pythonic(observations)
-
-    jitted_mstep = construct_jitted_mstep(
-        model,
-        optimizer,
-        config["mstep"]["update_max"],
-        config["update_blacklist"],
-        config["use_priors"],
-    )
-    jitted_estep = construct_jitted_estep(model)
-
-    # create functions used each step: batch generation / checkpointing
-    if config["batch_size"] is not None:
-        batch_rkey_seed = jr.PRNGKey(config["batch_seed"])
-        generate_batch = pt_obs.batch_generator(
-            config["batch_size"],
-            replace=False,
-            session_names=observations.ordered_session_names(),
-        )
-
-    save_with_status = lambda status: _save_checkpoint(
-        checkpoint_dir,
-        dict(
-            params=curr_params,
-            meta=meta,
-            step=step_i,
-            status=status,
-            **checkpoint_extra,
-        ),
-    )
-    curr_params = JointModelParams.from_types(
-        model, static, hyper, curr_trained
-    )
-    step_i = first_step
-
-    for step_i in iter:
-        aux_pdf = jitted_estep(
-            pt_obs,
-            static,
-            hyper,
-            curr_trained,
-        )
-
-        if config["batch_size"] is not None:
-            batch_rkey_seed, step_obs, ixs = generate_batch(batch_rkey_seed)
-            step_aux = aux_pdf[ixs]
-        else:
-            step_obs = pt_obs
-            step_aux = aux_pdf
-
-        if config["mstep"]["reinit_opt"]:
-            meta["opt_state"] = optimizer.init(curr_trained)
-        meta["opt_state"].hyperparams["learning_rate"] = lr_sched(step_i)
-        (
-            loss_hist_mstep,
-            trained_params_mstep,
-            mstep_end_objective,
-            mstep_param_trace,
-            meta["opt_state"],
-        ) = _mstep(
-            init_params=curr_trained,
-            static_params=static,
-            hyper_params=hyper,
-            aux_pdf=step_aux,
-            observations=step_obs,
-            jitted_step=jitted_mstep,
-            opt_state=meta["opt_state"],
-            session_names=observations.ordered_session_names(),
-            batch_seed=(config["mstep"]["batch_seed"] + step_i),
-            config=config["mstep"],
-        )
-
-        meta["loss"] = meta["loss"].at[step_i].set(loss_hist_mstep[-1])
-        curr_trained = trained_params_mstep
-        if return_mstep_losses:
-            meta["mstep_losses"] = (
-                meta["mstep_losses"]
-                .at[step_i, : len(loss_hist_mstep)]
-                .set(loss_hist_mstep)
-            )
-        if return_param_hist is True:
-            meta["param_hist"].append(curr_trained)
-        elif return_param_hist == "trace":
-            meta["param_hist"].record(curr_trained, step_i + 1)
-        elif return_param_hist == "mstep":
-            meta["param_hist"].record(mstep_param_trace.as_dict(), step_i)
-
-        curr_params = JointModelParams.from_types(
-            model, static, hyper, curr_trained
-        )
-
-        if return_reports:
-            aux_reports = {}
-            if config["full_dataset_objectives"]:
-                aux_reports["dataset_logprob"] = _mstep_objective(
-                    model,
-                    pt_obs,
-                    curr_params,
-                    aux_pdf=jitted_estep(
-                        pt_obs,
-                        static,
-                        hyper,
-                        curr_trained,
-                    ),
-                )["objectives"]["dataset"]
-            meta["reports"].record(
-                dict(
-                    logprobs=mstep_end_objective,
-                    lr=jnp.array(lr_sched(step_i)),
-                    **aux_reports,
-                ),
-                step_i,
-            )
-
-        if (log_every > 0) and (not step_i % log_every):
-            logging.info(f"Step {step_i} : loss = {meta['loss'][step_i]}")
-
-        if (checkpoint_every > 0) and (step_i % checkpoint_every == 0):
-            save_with_status("in_progress")
-
-        # evaluate early stopping and divergence
-        converged = _check_should_stop_early(
-            meta["loss"], step_i, config["tol"], config["stop_window"]
-        )
-        if converged:
-            meta["loss"] = meta["loss"][: step_i + 1]
-            logging.info("Stopping due to early convergence or divergence.")
-            save_with_status("finished.early_stop")
-            break
-        if not jnp.isfinite(meta["loss"][step_i]):
-            meta["loss"] = meta["loss"][: step_i + 1]
-            logging.warning("Stopping, diverged.")
-            save_with_status("finished.diverged")
-            break
-
-    final_ckpt = save_with_status("finished")
-    return final_ckpt
-
-@profiler
 def iterate_em(
     model: JointModel,
     init_params: JointModelParams,
