@@ -13,6 +13,7 @@ from typing import NamedTuple, Callable, Optional, Tuple
 import joblib as jl
 from pathlib import Path
 import logging
+import os
 
 
 def fit_standard(
@@ -247,8 +248,14 @@ def fit(
         Whether to restart fitting from scratch, even if a checkpoint exists.
     """
 
+    model_dir = Path(model_dir)
+    potential_ckpt = model_dir / "checkpoint.p"
+    if force_restart and potential_ckpt.exists():
+        logging.info(f"Removing existing model checkpoint {str(model_dir)}")
+        os.remove(str(potential_ckpt))
+
     # don't go any further if model is up to date with config
-    if fit_status(model_dir).startswith("finished") and not force_restart:
+    if fit_status(model_dir).startswith("finished"):
         logging.info(f"Model at {model_dir} is already up to date.")
         return load_fit(model_dir)
 

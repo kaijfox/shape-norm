@@ -95,7 +95,6 @@ class locked_pts(reducer):
     type_name = "locked_pts"
     defaults = dict(
         reduce_ixs=None,
-        n_kpts=None,
     )
 
     @staticmethod
@@ -155,8 +154,6 @@ class pcs(reducer):
     type_name = "pcs"
     defaults = dict(
         calibration=dict(tgt_variance=0.98),
-        n_dims=None,
-        n_kpts=None,
     )
 
     @staticmethod
@@ -165,7 +162,7 @@ class pcs(reducer):
         flat_data = arr.reshape((arr.shape[0], -1))
         calib = config["calibration_data"]
         pcs = CenteredPCA(calib["center"], calib["pcs"])
-        return pcs.coords(flat_data)[..., : config["n_dims"]]
+        return pcs.coords(flat_data)[..., : calib["n_dims"]]
 
     @staticmethod
     def inflate_array(arr, config):
@@ -174,11 +171,11 @@ class pcs(reducer):
         pcs = CenteredPCA(calib["center"], calib["pcs"])
         # add zeros for any dimensions that were removed
         n_pcs = pcs._pcadata.s.shape[0]
-        zeroes = jnp.zeros(arr.shape[:-1] + (n_pcs - config["n_dims"],))
+        zeroes = jnp.zeros(arr.shape[:-1] + (n_pcs - calib["n_dims"],))
         flat_data = jnp.concatenate([arr, zeroes], axis=-1)
         # transform out of PC space
         flat_arr = pcs.from_coords(flat_data)
-        kpt_shape = (config["n_kpts"], flat_arr.shape[-1] // config["n_kpts"])
+        kpt_shape = (calib["n_kpts"], flat_arr.shape[-1] // calib["n_kpts"])
         return flat_arr.reshape(arr.shape[:-1] + kpt_shape)
 
     @classmethod
@@ -226,17 +223,19 @@ class pcs(reducer):
         reconst_parts = coords[..., None] * pcs._pcadata.pcs()[None, ...]
         cum_reconst = jnp.cumsum(reconst_parts, axis=-2)
         kpt_shape = (
-            config["n_kpts"],
-            flat_arr.shape[-1] // config["n_kpts"],
+            dataset.n_points,
+            flat_arr.shape[-1] // dataset.n_points,
         )
         cum_dists = cum_reconst - flat_arr[..., None, :]
         errs = jla.norm(cum_dists.reshape(flat_arr.shape + kpt_shape), axis=-1)
 
         # outputs to main config and calibration_data
-        config["n_dims"] = int(selected_ix) + 1
-        config["n_kpts"] = dataset.n_points
         return dict(
-            pcs=pcs._pcadata, center=pcs._center, mean_errs=errs.mean(axis=0)
+            pcs=pcs._pcadata,
+            center=pcs._center,
+            mean_errs=errs.mean(axis=0),
+            n_kpts=dataset.n_points,
+            n_dims=int(selected_ix) + 1,
         )
 
     @staticmethod
@@ -257,7 +256,7 @@ class pcs(reducer):
         # variance explained
         scree(
             cumsum,
-            config["n_dims"],
+            calib["n_dims"],
             config["calibration"]["tgt_variance"],
             ax=ax[0],
         )
@@ -266,7 +265,7 @@ class pcs(reducer):
         # variance explained
         scree(
             calib["mean_errs"],
-            config["n_dims"],
+            calib["n_dims"],
             None,
             ax=ax[1],
         )

@@ -7,13 +7,15 @@ from .util import (
     legend,
     axes_off,
     flat_grid,
+    select_frame_gallery,
 )
 from .videos import (
     load_videos,
     _egocentric_crop,
     _overlay_keypoints,
-    _centroid_headings_and_sizes,
+    _scalar_summaries,
     _egocentric_window_align,
+    write_video,
 )
 from ..io.utils import stack_dict
 from ..models.morph.lowrank_affine import LRAParams, model as lra_model
@@ -312,7 +314,10 @@ def _insert_calibration_data_to_checkpoint_config(checkpoint):
 
 
 def compare_nearest_frames(
-    checkpoint: dict, colors: colorset = None, group_lines=False
+    output_path: Path,
+    checkpoint: dict,
+    colors: colorset = None,
+    group_lines=False,
 ):
     """Nearest frames of each session to the reference session before and after
     morphing.
@@ -423,6 +428,7 @@ def plot_calibration(project: Project, config: dict, colors=None):
 
 
 def display_clip_across_bodies(
+    output_path,
     checkpoint,
     source_session,
     start,
@@ -430,9 +436,10 @@ def display_clip_across_bodies(
     window_size,
     n_cols=3,
     fixed_crop=False,
-    subject_size=0.667,
+    subject_size=0.8,
     colors: colorset = None,
     font_scale=0.5,
+    fps=30.0,
 ):
     """Display a video clip across all bodies in a session."""
 
@@ -446,47 +453,61 @@ def display_clip_across_bodies(
     _inflate = lambda arr: inflate(arr, config["features"])
     armature = Armature.from_config(config["dataset"])
 
-    video = load_videos(config["dataset"], start, end, [source_session])[
-        source_session
-    ]
-    frames = video["frames"]
-    keypts_video = video["keypoints"]
-    c, h, s = _centroid_headings_and_sizes(keypts_video)
+    video, video_kpts = load_videos(
+        config["dataset"], start, end, [source_session]
+    )
+    frames = video[source_session]
+    anterior_ix = config["dataset"]["viz"]["anterior_ix"]
+    posterior_ix = config["dataset"]["viz"]["posterior_ix"]
+    c, h, s = _scalar_summaries(
+        video_kpts[source_session], anterior_ix, posterior_ix
+    )
 
+    raw_window_size = int(np.ceil(s.max() * 2 / subject_size))
     video_tile = _egocentric_crop(
-        frames, c, h, s.max() * 2 / subject_size, window_size, fixed_crop
+        frames, c, h, raw_window_size, window_size, fixed_crop
     )
 
     # create a dataset with a session for each body, all containing identical
     # data: the clip from the source session
     ref_body = dataset.sess_bodies[source_session]
     ref_kpt_frames = dataset.get_session(source_session)[start:end]
-    new_data, slices = stack_dict({b: ref_kpt_frames for b in dataset.bodies})
-    new_bodies = {s: ref_body for s in dataset.sessions}
-    short_data = dataset.with_sessions(new_data, slices, new_bodies, ref_body)
+    new_data, slices = stack_dict(
+        {f"s-{b}": ref_kpt_frames for b in dataset.bodies}
+    )
+    new_bodies = {f"s-{b}": ref_body for b in dataset.bodies}
+    short_data = dataset.with_sessions(
+        new_data,
+        slices,
+        new_bodies,
+        f"s-{ref_body}",
+        _body_names=dataset._body_names,
+    )
     # map each session onto the body for which the session is named
     mapped = apply_bodies(
         model.morph,
         params,
         short_data,
-        {b: b for b in dataset.bodies},
+        {f"s-{b}": b for b in dataset.bodies},
     )
 
-    inflated_ref = _inflate(dataset.get_session(source_session))
+    inflated_ref = _inflate(short_data.get_session(short_data.ref_session))
     xaxis = 0
     mapped_tiles = {}
     for view_name, yaxis in zip(["top", "side"], [2, 1]):
 
         # align the reference an egocentric view and record params of the view
         # to align the mapped sessions as well
-        rc, rh, rs = _centroid_headings_and_sizes(
-            inflated_ref[..., [xaxis, yaxis]]
+        rc, rh, rs = _scalar_summaries(
+            inflated_ref[..., [xaxis, yaxis]],
+            armature=armature,
         )
         if view_name == "side":
             rh *= 0  # do not rotate side view
         keypt_scale = rs.max() * 2 / subject_size
+
         ref_kpt_frames = _egocentric_window_align(
-            inflated_ref[..., [xaxis, yaxis]],
+            np.array(inflated_ref[..., [xaxis, yaxis]]),
             rc,
             rh,
             keypt_scale,
@@ -506,8 +527,11 @@ def display_clip_across_bodies(
         # align mapped sessions to the egocentric view from above and overlay
         # atop the reference session keypoints
         for i, b in enumerate(dataset.bodies):
-            inflated = _egocentric_window_align(
-                _inflate(mapped.get_session(b))[..., [xaxis, yaxis]],
+            inflated = _inflate(mapped.get_session(f"s-{b}"))[
+                ..., [xaxis, yaxis]
+            ]
+            scaled = _egocentric_window_align(
+                np.array(inflated),
                 rc,
                 rh,
                 keypt_scale,
@@ -515,28 +539,32 @@ def display_clip_across_bodies(
                 fixed_crop,
             )
             mapped_tiles[view_name][b] = _overlay_keypoints(
-                ref_tile, inflated, armature, keypoint_colors=pal[i], copy=True
+                ref_tile, scaled, armature, keypoint_colors=pal[i], copy=True
             )
 
     # stack the various tiles together
-    n_rows = np.ceil(dataset.n_bodies / n_cols)
-    tiles = np.zeros([n_rows, 2 * n_cols + 1, window_size, window_size])
+    n_cols = int(min(n_cols, dataset.n_bodies))
+    n_rows = int(np.ceil(dataset.n_bodies / n_cols))
+    tiles = np.zeros(
+        [n_rows, 2 * n_cols + 1, end - start, window_size, window_size, 3]
+    )
     tiles[0, 0] = video_tile
-    header_height = 20
-    headers = np.zeros([n_rows, 2 * n_cols + 1, header_height, window_size])
+    header_height = window_size // 4
+    header_buff = np.zeros([n_rows, 1, header_height, window_size, 3])
+    headers = np.zeros([n_rows, n_cols, header_height, window_size * 2, 3])
     for i, b in enumerate(dataset.bodies):
         # force reference body to be in the top left corner
-        j = i + 1
+        i = i + 1
         if b == ref_body:
-            j = 0
+            i = 0
         r, c = (i // n_cols, i % n_cols)
         c = 2 * c + 1
         tiles[r, c] = mapped_tiles["top"][b]
         tiles[r, c + 1] = mapped_tiles["side"][b]
-        headers[r, c] = cv2.putText(
-            headers[r, c, 0, 0],
+        headers[r, i % n_cols] = cv2.putText(
+            headers[r, i % n_cols],
             b,
-            (10, header_height // 2),
+            (2, header_height // 2),
             cv2.FONT_HERSHEY_SIMPLEX,
             font_scale,
             (255, 255, 255),
@@ -545,7 +573,19 @@ def display_clip_across_bodies(
         )
 
     # join tiles and headers into one large video
-    tiled_vid = np.concatenate(
-        np.concatenate(np.concatenate([tiles, headers], axis=2), axis=-2),
-        axis=-1,
+    # concatenate tiles within each row
+    headers = np.concatenate(
+        [header_buff[:, 0], *np.swapaxes(headers, 0, 1)], axis=-2
     )
+    tiles = np.concatenate(tiles.swapaxes(0, 1), axis=-2)
+    # alterate tiles and headers in columns and concatenate columns
+    headers = np.broadcast_to(
+        headers[:, None], tiles.shape[:2] + headers.shape[1:]
+    )
+    interleaved = np.concatenate([headers, tiles], axis=-3)
+    tiled_vid = np.concatenate(interleaved, axis=-3)
+
+    if output_path is not None:
+        write_video(str(output_path), tiled_vid, fps=fps)
+
+    return tiled_vid

@@ -1,11 +1,13 @@
 from ..io.loaders import _get_root_path
 from ..io.armature import Armature
+from .util import plot_mouse
 
 from pathlib import Path
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 import imageio.v3 as iio
+import logging
 
 
 def add_videos_to_config(
@@ -14,6 +16,10 @@ def add_videos_to_config(
     video_root=None,
     keypoint_root=None,
     keypoint_type: str = "raw_npy",
+    display_range=None,
+    anterior_ix=None,
+    posterior_ix=None,
+    choose_with_frame=0,
 ):
     """Add video paths
     Parameters
@@ -31,25 +37,61 @@ def add_videos_to_config(
     """
 
     video_root = Path("/") if video_root is None else Path(video_root)
-    keypoint_root = Path("/") if keypoint_root is None else Path(keypoint_root)
-    video_paths, video_root = _get_root_path(
+    keypt_root = Path("/") if keypoint_root is None else Path(keypoint_root)
+    video_root, video_paths = _get_root_path(
         {s: video_root / paths[s]["video"] for s in paths}
     )
-    keypt_paths, keypt_root = _get_root_path(
+    keypt_root, keypt_paths = _get_root_path(
         {s: keypt_root / paths[s]["keypoints"] for s in paths}
     )
-    config["dataset"]["viz"]["videos"] = dict(
-        video_root=video_root,
-        keypoint_root=keypt_root,
-        keypoint_type=keypoint_type,
-        **{
-            s: dict(video=video_paths[s], keypoints=keypt_paths[s])
-            for s in paths
-        },
+
+    # add config necessary to load videos
+    config["dataset"]["viz"].update(
+        dict(
+            video_root=video_root,
+            keypoint_root=keypt_root,
+            keypoint_type=keypoint_type,
+            video_display_range=display_range,
+            videos={
+                s: dict(video=video_paths[s], keypoints=keypt_paths[s])
+                for s in paths
+            },
+        )
+    )
+
+    # allow user to specify anterior/posterior indices if not given
+    if anterior_ix is None or posterior_ix is None:
+        logging.error(
+            "[add_videos_to_config] No anterior/posterior indices provided. "
+            "Plotting keypoint indices. "
+            "Please choose an anterior and posterior keypoint and rerun. " 
+            "Use argument `choose_with_frame` to specify the frame to display."
+        )
+        _choose_anterior_posterior_keypoints(config, frame = choose_with_frame)
+        return config
+
+
+    config["dataset"]["viz"].update(
+        dict(anterior_ix=anterior_ix, posterior_ix=posterior_ix)
     )
 
     return config
 
+
+def _choose_anterior_posterior_keypoints(
+    config,
+    frame = 0
+):
+    config
+    example = list(config["dataset"]["viz"]["videos"].keys())[0]
+    v, k = load_videos(config["dataset"], frame, frame+1, whitelist=[example])
+    c, h, s = _scalar_summaries(k[example])
+    k = _egocentric_window_align(k[example], c, h, s.max() * 3, 256)
+    v = _egocentric_crop(v[example], c, h, int(s.max() * 3), 256)
+    fig, ax = _overlay_keypoint_numbers(v[0], k[0], point_color = 'r')
+    ax.set_title(f"keypoint indices | {example}, frame {frame}")
+    plt.show()
+        
 
 def load_videos(config, start, end, whitelist=None):
     """
@@ -67,6 +109,7 @@ def load_videos(config, start, end, whitelist=None):
     keypt_type = viz_config["keypoint_type"]
     video_root = viz_config["video_root"]
     keypt_root = viz_config["keypoint_root"]
+    display_range = viz_config["video_display_range"]
 
     videos = {}
     keypts = {}
@@ -77,12 +120,17 @@ def load_videos(config, start, end, whitelist=None):
         keypt_path = Path(keypt_root) / video_dict[session]["keypoints"]
 
         # read segment of the video
-        cap = cv2.VideoCapture(video_path)
+        cap = cv2.VideoCapture(str(video_path))
         cap.set(cv2.CAP_PROP_POS_FRAMES, start)
         frames = []
         for i in range(end):
             res, frame = cap.read()
             if res:
+                if display_range is not None:
+                    l, h = display_range
+                    frame = (np.clip(frame, l, h) - l) / (h - l)
+                if frame.max() < 1.5:
+                    frame = (frame * 255).astype(np.uint8)
                 frames.append(frame)
             else:
                 raise ValueError(f"Could not read frame {i} from {video_path}")
@@ -92,14 +140,21 @@ def load_videos(config, start, end, whitelist=None):
 
         if keypt_type == "raw_npy":
             full_keypts = np.load(keypt_path)
+        elif keypt_type.startswith("h5"):
+            import h5py
+
+            with h5py.File(keypt_path, "r") as f:
+                full_keypts = f[keypt_type.split(":")[1]][:]
         else:
             raise ValueError(f"Unknown keypoint type: {keypt_type}")
         keypts[session] = full_keypts[start:end]
 
-    return videos
+    return videos, keypts
 
 
-def _centroid_headings_and_sizes(keypoints):
+def _scalar_summaries(
+    keypoints, anterior_ix=None, posterior_ix=None, armature=None, smooth_headings=1
+):
     """Return the centroid and heading (direciton of maximal variance) of
     keypoints.
 
@@ -107,13 +162,29 @@ def _centroid_headings_and_sizes(keypoints):
     ----------
     keypoints : array, shape (n_frames, n_keypoints, 2)
         Array of keypoints.
+    smooth_headings : bool or int, default=False
+        If True, smooth the heading with a rolling mean of width 5. If an int,
+        use the specified width.
     """
-    centroid = np.mean(keypoints, axis=0)
-    centered = keypoints - centroid[None]
-    cov = (np.swapaxes(centered, -2, -1) @ centered) / centered.shape[1]
-    _, vecs = np.linalg.eigh(cov)
-    theta = np.arctan2(vecs[:, 1, -1], vecs[:, 0, -1])
-    sizes = np.linalg.norm(centered, axies=-1).max(axis=-1)
+    if armature is not None:
+        anterior_ix = armature.keypt_by_name[armature.anterior]
+        posterior_ix = armature.keypt_by_name[armature.posterior]
+    centroid = np.mean(keypoints, axis=1)
+    centered = keypoints - centroid[:, None]
+    if anterior_ix is None or posterior_ix is None:
+        theta = np.zeros(len(keypoints))
+    else:
+        vec = centered[:, anterior_ix] - centered[:, posterior_ix]
+        theta = np.arctan2(vec[:, 1], vec[:, 0])
+    if smooth_headings:
+        theta = np.unwrap(theta)
+        if smooth_headings < 2:
+            smooth_headings = 5
+        theta = np.convolve(
+            theta, np.ones(smooth_headings) / smooth_headings, mode="same"
+        )
+        
+    sizes = np.linalg.norm(centered, axis=-1).max(axis=-1)
     return centroid, theta, sizes
 
 
@@ -168,14 +239,27 @@ def _egocentric_crop(
     return np.stack(tile)
 
 
+def _overlay_keypoint_numbers(
+    frame, keypoints, text_color="k", point_color="w"
+):
+    """Overlay keypoints and their indices on a frame."""
+    fig, ax = plt.subplots()
+    ax.imshow(frame)
+    for i, (x, y) in enumerate(keypoints):
+        ax.plot(x, y, 'o', ms = 8, color=point_color)
+        ax.text(x - 4, y + 4, str(i), color=text_color, fontsize=8)
+    ax.axis("off")
+    return fig, ax
+
+
 def _overlay_keypoints(
     image,
     keypoints,
     armature: Armature,
     keypoint_cmap=None,
     keypoint_colors=None,
-    node_size=5,
-    line_width=2,
+    node_size=2,
+    line_width=1,
     copy=False,
     opacity=1.0,
 ):
@@ -188,10 +272,6 @@ def _overlay_keypoints(
 
     keypoints: ndarray of shape (n_keypoints, 2)
         Array of keypoint keypoints.
-
-    edges: list of tuples, default=[]
-        List of edges that define the skeleton, where each edge is a
-        pair of indexes.
 
     keypoint_cmap: str, default='autumn'
         Name of a matplotlib colormap to use for coloring the keypoints.
@@ -224,10 +304,25 @@ def _overlay_keypoints(
     else:
         canvas = image
 
+    if canvas.ndim > 3:
+        for i in range(canvas.shape[0]):
+            canvas[i] = _overlay_keypoints(
+                canvas[i],
+                keypoints[i],
+                armature,
+                keypoint_cmap,
+                keypoint_colors,
+                node_size,
+                line_width,
+                False,  # already copied if requested
+                opacity,
+            )
+        return canvas
+
     if keypoint_colors is None:
         cmap = plt.colormaps[keypoint_cmap]
         colors = np.array(cmap(np.linspace(0, 1, keypoints.shape[0])))[:, :3]
-    elif keypoint_colors.ndim == 1:
+    elif np.array(keypoint_colors).ndim == 1:
         colors = np.array([keypoint_colors] * len(keypoints))
     else:
         colors = np.array(keypoint_colors)
@@ -302,17 +397,20 @@ def _egocentric_window_align(
         d = r @ c - data_size // 2
         M = [[np.cos(h), np.sin(h), -d[0]], [-np.sin(h), np.cos(h), -d[1]]]
 
-        frame = cv2.transform(frame, np.float32(M))
+        frame = cv2.transform(frame[None], np.float32(M))[0]
         frame = frame * scaled_window_size / data_size
+
+        frame[:, 1] = scaled_window_size - frame[:, 1]
+
         tile.append(frame)
 
     return np.stack(tile)
 
 
 def write_video(path, frames, fps, show_frame_numbers=False):
-    with iio.get_writer(
-        path, pixelformat="yuv420p", fps=fps, quality=5
-    ) as writer:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with iio.imopen(str(path), "w", plugin="pyav") as writer:
+        writer.init_video_stream("h264", fps=fps, pixel_format="yuv420p")
         for i, frame in enumerate(frames):
 
             if show_frame_numbers:
@@ -327,4 +425,4 @@ def write_video(path, frames, fps, show_frame_numbers=False):
                     cv2.LINE_AA,
                 )
 
-            writer.append_data(frame)
+            writer.write_frame(frame)
