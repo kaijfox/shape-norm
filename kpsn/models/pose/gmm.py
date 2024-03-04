@@ -40,7 +40,7 @@ defaults = dict(
 
 
 def calibrate_base_model(
-    project: Project, dataset: FeatureDataset, config: dict, n_components=None
+    dataset: FeatureDataset, config: dict, n_components=None
 ):
     """
     Calibrate a pose model on a dataset.
@@ -136,7 +136,7 @@ def _fit_gmm(
     return init_mix.fit(init_pts)
 
 
-def plot_calibration(project: Project, config, colors):
+def plot_calibration(config, colors):
     """
     Plot calibration data for a pose model.
 

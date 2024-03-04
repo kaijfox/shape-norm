@@ -55,8 +55,13 @@ def _get_root_path(paths: dict):
     paths = {k: Path(fp).parts for k, fp in paths.items()}
     first_path = paths[list(paths.keys())[0]]
     root = ()
+    i = 0
     while all(fp[: len(root)] == root for fp in paths.values()):
         root = first_path[: len(root) + 1]
+        i += 1
+        if i > 100:
+            root = ()
+            break
     return (
         str(Path(*root[:-1])),
         {k: str(Path(*fp[len(root) - 1 :])) for k, fp in paths.items()},
@@ -133,7 +138,7 @@ class DatasetLoader(object):
 
         Parameters
         ----------
-        project : kpsn.Project
+        project : kpsn.Project or str or pathlib.Path
         dataset_detail : dict
             Dataset-specific config.
         alignment_type : str, default None
@@ -144,7 +149,6 @@ class DatasetLoader(object):
             dataset type.
         """
 
-        ensure_dirs(project)
         cls._validate_config(dataset_detail)
 
         if alignment_type is None:
@@ -152,13 +156,24 @@ class DatasetLoader(object):
         if feature_type is None:
             feature_type = cls.default_features.type_name
 
+        if isinstance(project, (str, Path)):
+            abspath = Path(os.path.realpath(str(project)))
+            calib_path = abspath.parent / f"{abspath.stem}.calib.p"
+        else:
+            calib_path = os.path.realpath(project.root() / "calibration.p")
+
         full_cfg = construct_nondataset_project_config(
-            os.path.realpath(project.root() / "calibration.p"),
+            calib_path,
             dataset_detail,
             alignment_type,
             feature_type,
         )
-        return save_config(project.main_config(), full_cfg)
+
+        if isinstance(project, (str, Path)):
+            return save_config(project, full_cfg)
+        else:
+            ensure_dirs(project)
+            return save_config(project.main_config(), full_cfg)
 
     @classmethod
     def load(cls, config, meta_only=False, allow_subsample=True):

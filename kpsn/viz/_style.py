@@ -77,7 +77,7 @@ class plot_finalizer(object):
             fig.tight_layout()
 
         if name is not None and (save and self.save or save == "force"):
-            out_file = self.plot_dir + "/" + name + ".png"
+            out_file = self.plot_dir + "/" + name + "." + self.fmt
             print(out_file)
             fig.savefig(out_file, **self.kws)
         if display:

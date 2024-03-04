@@ -191,7 +191,7 @@ def lra_param_convergence(checkpoint: dict, colors: colorset = None):
     )
     n_bodies = int(param_hist.morph.n_bodies[0])
     n_dims = int(param_hist.morph.n_dims[0])
-    pal = [colors.C[0], colors.C[2], colors.C[1], colors.C[3]]
+    pal = colors.make("Spectral")(n_bodies)
     fig, ax = plt.subplots(
         n_dims + 1,
         n_bodies - 1,
@@ -409,7 +409,7 @@ def compare_nearest_frames(
     return fig
 
 
-def plot_calibration(project: Project, config: dict, colors=None):
+def plot_calibration(config: dict, colors=None):
     """Plot explanations of model calibration values.
 
     Parameters
@@ -422,18 +422,18 @@ def plot_calibration(project: Project, config: dict, colors=None):
         colors = colorset.active
     model = get_model(config)
     return {
-        "morph": model.morph.plot_calibration(project, config, colors),
-        "pose": model.pose.plot_calibration(project, config, colors),
+        "morph": model.morph.plot_calibration(config, colors),
+        "pose": model.pose.plot_calibration(config, colors),
     }
 
 
 def display_clip_across_bodies(
     output_path,
     checkpoint,
-    source_session,
     start,
     end,
     window_size,
+    source_session = None,
     n_cols=3,
     fixed_crop=False,
     subject_size=0.8,
@@ -453,6 +453,8 @@ def display_clip_across_bodies(
     _inflate = lambda arr: inflate(arr, config["features"])
     armature = Armature.from_config(config["dataset"])
 
+    if source_session is None:
+        source_session = dataset.ref_session
     video, video_kpts = load_videos(
         config["dataset"], start, end, [source_session]
     )

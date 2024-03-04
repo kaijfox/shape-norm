@@ -144,13 +144,13 @@ class sagittal(AlignmentMethod):
 
     @staticmethod
     def calibrate(
-        project, dataset, full_config, origin=None, anterior=None, rescale=None
+        dataset, full_config, origin=None, anterior=None, rescale=None
     ):
         """Setup config for a dataset.
 
         Parameters
         ----------
-        config : dict
+        full_config : dict
             Full project config.
         """
         sagittal._setup_config(

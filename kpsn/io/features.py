@@ -59,9 +59,7 @@ class reducer(object):
         raise NotImplementedError
 
     @classmethod
-    def calibrate(
-        cls, project: Project, dataset: KeypointDataset, config, **kwargs
-    ):
+    def calibrate(cls, dataset: KeypointDataset, config, **kwargs):
         """Calibrate feature extraction for a dataset.
 
         Parameters
@@ -179,9 +177,7 @@ class pcs(reducer):
         return flat_arr.reshape(arr.shape[:-1] + kpt_shape)
 
     @classmethod
-    def calibrate(
-        cls, project: Project, dataset: KeypointDataset, config, n_dims=None
-    ):
+    def calibrate(cls, dataset: KeypointDataset, config, n_dims=None):
         """Calibrate feature extraction for a dataset.
 
         Parameters
@@ -194,7 +190,7 @@ class pcs(reducer):
             dimensions explaining `tgt_variance` of the variance as specified in
             the config.
         """
-        return super().calibrate(project, dataset, config, n_dims=n_dims)
+        return super().calibrate(dataset, config, n_dims=n_dims)
 
     @staticmethod
     def _calibrate(dataset: KeypointDataset, config: dict, n_dims=None):
@@ -239,7 +235,7 @@ class pcs(reducer):
         )
 
     @staticmethod
-    def plot_calibration(project: Project, config: dict, colors=None):
+    def plot_calibration(config: dict, colors=None):
         """Plot calibration data."""
         from ..viz.general import scree
 

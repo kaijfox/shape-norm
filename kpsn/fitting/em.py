@@ -35,7 +35,7 @@ def fit_model(model, dataset, config):
     pass
 
 
-def calibrate_base_model(project, dataset, config):
+def calibrate_base_model(dataset, config):
     """
     Calibrate a morph model from a dataset.
 
@@ -58,7 +58,7 @@ def _save_checkpoint(save_dir, contents):
     save_dir.mkdir(exist_ok=True)
     jl.dump(contents, checkpoint_file)
     return contents
-    
+
 
 def _check_should_stop_early(loss_hist, step_i, tol, stop_window):
     """
@@ -73,7 +73,7 @@ def _check_should_stop_early(loss_hist, step_i, tol, stop_window):
     if tol is not None and step_i > stop_window:
         loss_hist = loss_hist[step_i - stop_window : step_i + 1]
         diff = np.diff(loss_hist)
-        median = np.median(diff) 
+        median = np.median(diff)
         return median > -tol
     return False
 
@@ -231,7 +231,7 @@ def construct_jitted_estep(model: JointModel):
 
     return step
 
-        
+
 def _mstep(
     init_params: tuple,
     static_params: tuple,
@@ -243,7 +243,7 @@ def _mstep(
     session_names: tuple,
     config: dict,
     batch_seed: int = 29,
-    trace_params = False,
+    trace_params=False,
     log_every=-1,
 ) -> Tuple[Float[Array, "n_steps"], JointModelParams, dict, ArrayTrace, dict]:
     """

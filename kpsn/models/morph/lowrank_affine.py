@@ -25,9 +25,7 @@ defaults = dict(
 )
 
 
-def calibrate_base_model(
-    project: Project, dataset: FeatureDataset, config, n_dims=None
-):
+def calibrate_base_model(dataset: FeatureDataset, config, n_dims=None):
     """
     Calibrate a morph model from a dataset.
 
@@ -47,7 +45,7 @@ def calibrate_base_model(
     if n_dims is None:
         selected_ix = jnp.argmax(scree > config["calibration"]["tgt_variance"])
     else:
-        selected_ix = n_dims - 1
+        selected_ix = n_dims
 
     # variance of each component in feature space
     mean_vars = jnp.var(
@@ -72,7 +70,7 @@ def calibrate_base_model(
     return full_config
 
 
-def plot_calibration(project: Project, config: dict, colors):
+def plot_calibration(config: dict, colors):
     """Plot calibration data.
 
     Parameters

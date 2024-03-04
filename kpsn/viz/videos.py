@@ -64,12 +64,11 @@ def add_videos_to_config(
         logging.error(
             "[add_videos_to_config] No anterior/posterior indices provided. "
             "Plotting keypoint indices. "
-            "Please choose an anterior and posterior keypoint and rerun. " 
+            "Please choose an anterior and posterior keypoint and rerun. "
             "Use argument `choose_with_frame` to specify the frame to display."
         )
-        _choose_anterior_posterior_keypoints(config, frame = choose_with_frame)
+        _choose_anterior_posterior_keypoints(config, frame=choose_with_frame)
         return config
-
 
     config["dataset"]["viz"].update(
         dict(anterior_ix=anterior_ix, posterior_ix=posterior_ix)
@@ -78,20 +77,17 @@ def add_videos_to_config(
     return config
 
 
-def _choose_anterior_posterior_keypoints(
-    config,
-    frame = 0
-):
+def _choose_anterior_posterior_keypoints(config, frame=0):
     config
     example = list(config["dataset"]["viz"]["videos"].keys())[0]
-    v, k = load_videos(config["dataset"], frame, frame+1, whitelist=[example])
+    v, k = load_videos(config["dataset"], frame, frame + 1, whitelist=[example])
     c, h, s = _scalar_summaries(k[example])
     k = _egocentric_window_align(k[example], c, h, s.max() * 3, 256)
     v = _egocentric_crop(v[example], c, h, int(s.max() * 3), 256)
-    fig, ax = _overlay_keypoint_numbers(v[0], k[0], point_color = 'r')
+    fig, ax = _overlay_keypoint_numbers(v[0], k[0], point_color="r")
     ax.set_title(f"keypoint indices | {example}, frame {frame}")
     plt.show()
-        
+
 
 def load_videos(config, start, end, whitelist=None):
     """
@@ -153,7 +149,11 @@ def load_videos(config, start, end, whitelist=None):
 
 
 def _scalar_summaries(
-    keypoints, anterior_ix=None, posterior_ix=None, armature=None, smooth_headings=1
+    keypoints,
+    anterior_ix=None,
+    posterior_ix=None,
+    armature=None,
+    smooth_headings=1,
 ):
     """Return the centroid and heading (direciton of maximal variance) of
     keypoints.
@@ -183,7 +183,7 @@ def _scalar_summaries(
         theta = np.convolve(
             theta, np.ones(smooth_headings) / smooth_headings, mode="same"
         )
-        
+
     sizes = np.linalg.norm(centered, axis=-1).max(axis=-1)
     return centroid, theta, sizes
 
@@ -246,7 +246,7 @@ def _overlay_keypoint_numbers(
     fig, ax = plt.subplots()
     ax.imshow(frame)
     for i, (x, y) in enumerate(keypoints):
-        ax.plot(x, y, 'o', ms = 8, color=point_color)
+        ax.plot(x, y, "o", ms=8, color=point_color)
         ax.text(x - 4, y + 4, str(i), color=text_color, fontsize=8)
     ax.axis("off")
     return fig, ax
