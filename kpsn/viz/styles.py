@@ -7,7 +7,8 @@ def init_nb(
     plot_dir, style="vscode_dark", context="paper", **kws
 ) -> Tuple[colorset, plot_finalizer]:
 
-    _style = set_style(style)
+    set_style(style)
+    _style = colorset.active
     sns.set_context(context)
     clr = color_sets[style]
     plotter = plot_finalizer(plot_dir, **kws)

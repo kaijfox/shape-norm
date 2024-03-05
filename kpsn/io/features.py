@@ -4,8 +4,10 @@ from ..config import load_calibration_data, save_calibration_data
 from ..pca import fit_with_center, CenteredPCA
 
 import jax.numpy as jnp
+import jax.random as jr
 import jax.numpy.linalg as jla
 import matplotlib.pyplot as plt
+import logging
 
 
 class reducer(object):
@@ -152,6 +154,8 @@ class pcs(reducer):
     type_name = "pcs"
     defaults = dict(
         calibration=dict(tgt_variance=0.98),
+        max_pts=10000,
+        subset_seed=823,
     )
 
     @staticmethod
@@ -196,9 +200,23 @@ class pcs(reducer):
     def _calibrate(dataset: KeypointDataset, config: dict, n_dims=None):
         """Calibrate feature extraction for a dataset."""
         config = config["features"]
+
+        flat_data = dataset.as_features().data
+        if config["max_pts"] is not None:
+            subset = jr.choice(
+                jr.PRNGKey(config["subset_seed"]),
+                flat_data.shape[0],
+                (config["max_pts"],),
+                replace=False,
+            )
+            logging.info(
+                f"Reducing dataset size for PCA: {flat_data.shape[0]} "
+                f"to {config['max_pts']}."
+            )
+            flat_data = flat_data[subset]
+
         # fit PCA
-        flat_data = dataset.as_features()
-        pcs = fit_with_center(flat_data.data)
+        pcs = fit_with_center(flat_data)
 
         # -- choose number of dimensions in reduced data
         scree = (
@@ -213,7 +231,7 @@ class pcs(reducer):
             selected_ix = n_dims - 1
 
         # -- keypoint errors resulting from PCA reduction
-        flat_arr = flat_data.data - pcs._center[None]
+        flat_arr = flat_data - pcs._center[None]
         coords = pcs._pcadata.coords(flat_arr)
         # (n_samples, n_dims, n_dims), sum over axis 1 (aka -2) gives flat_data
         reconst_parts = coords[..., None] * pcs._pcadata.pcs()[None, ...]

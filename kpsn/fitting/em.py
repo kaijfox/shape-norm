@@ -13,6 +13,7 @@ import functools
 import logging
 import optax
 import tqdm
+import time
 import jax
 
 from ..models import pose
@@ -262,7 +263,7 @@ def _mstep(
     n_steps = config["n_steps"]
     batch_size = config["batch_size"]
     curr_trained = init_params
-    loss_hist = []
+    loss_hist = np.full([n_steps], np.nan, dtype=np.float32)
 
     if trace_params:
         param_trace = ArrayTrace(n_steps)
@@ -293,7 +294,7 @@ def _mstep(
             curr_trained,
             step_aux,
         )
-        loss_hist.append(float(loss_value))
+        loss_hist[step_i] = float(loss_value)
         if trace_params:
             param_trace.record(curr_trained, step_i)
 
@@ -308,7 +309,13 @@ def _mstep(
             break
 
     loss_hist = jnp.array(loss_hist)
-    return loss_hist, curr_trained, objectives, param_trace, opt_state
+    return (
+        loss_hist,
+        curr_trained,
+        objectives,
+        param_trace,
+        opt_state,
+    )
 
 
 def _initialize_or_continue_metadata(
@@ -325,6 +332,9 @@ def _initialize_or_continue_metadata(
     if meta is None:
         meta = {
             "loss": jnp.full([n_steps], jnp.nan),
+            "gd_step": jnp.full([n_steps], jnp.nan),
+            "mstep_length": jnp.full([n_steps], jnp.nan),
+            "walltime": jnp.full([n_steps], jnp.nan),
             "opt_state": init_opt_state,
         }
         if return_mstep_losses:
@@ -348,6 +358,15 @@ def _initialize_or_continue_metadata(
         meta_new = {
             "loss": jnp.concatenate(
                 [meta["loss"], jnp.full([n_steps - old_n], jnp.nan)]
+            ),
+            "gd_step": jnp.concatenate(
+                [meta["gd_step"], jnp.full([n_steps - old_n], jnp.nan)]
+            ),
+            "mstep_length": jnp.concatenate(
+                [meta["mstep_length"], jnp.full([n_steps - old_n], jnp.nan)]
+            ),
+            "walltime": jnp.concatenate(
+                [meta["walltime"], jnp.full([n_steps - old_n], jnp.nan)]
             ),
             "opt_state": meta["opt_state"],
         }
@@ -413,11 +432,6 @@ def iterate_em(
     n_steps = config["n_steps"]
 
     static, hyper, curr_trained = init_params.by_type()
-    iter = (
-        range(first_step, n_steps)
-        if not progress
-        else tqdm.trange(first_step, n_steps)
-    )
 
     # set up learning rate schedule
     learning_rate = config["learning_rate"]
@@ -495,9 +509,17 @@ def iterate_em(
     curr_params = JointModelParams.from_types(
         model, static, hyper, curr_trained
     )
-    step_i = first_step
 
-    for step_i in iter:
+    step_iter = (
+        range(first_step, n_steps)
+        if not progress
+        else tqdm.trange(first_step, n_steps)
+    )
+    gd_step = 0 if first_step == 0 else meta["gd_step"][first_step]
+    walltime = 0 if first_step == 0 else meta["walltime"][first_step]
+
+    for step_i in step_iter:
+        step_start_time = time.time()
         aux_pdf = jitted_estep(
             pt_obs,
             static,
@@ -535,13 +557,16 @@ def iterate_em(
             config=config["mstep"],
         )
 
+        mstep_len = len(loss_hist_mstep)
         meta["loss"] = meta["loss"].at[step_i].set(loss_hist_mstep[-1])
+        meta["mstep_length"] = meta["mstep_length"].at[step_i].set(mstep_len)
+        meta["gd_step"] = (
+            meta["gd_step"].at[step_i].set(gd_step := gd_step + mstep_len)
+        )
         curr_trained = trained_params_mstep
         if return_mstep_losses:
             meta["mstep_losses"] = (
-                meta["mstep_losses"]
-                .at[step_i, : len(loss_hist_mstep)]
-                .set(loss_hist_mstep)
+                meta["mstep_losses"].at[step_i, :mstep_len].set(loss_hist_mstep)
             )
         if return_param_hist is True:
             meta["param_hist"].append(curr_trained)
@@ -597,6 +622,12 @@ def iterate_em(
             logging.warning("Stopping, diverged.")
             save_with_status("finished.diverged")
             break
+
+        meta["walltime"] = (
+            meta["walltime"]
+            .at[step_i]
+            .set(walltime := (walltime + (time.time() - step_start_time)))
+        )
 
     final_ckpt = save_with_status("finished")
     return final_ckpt

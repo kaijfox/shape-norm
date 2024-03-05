@@ -25,9 +25,9 @@ def _align_scales(dataset: KeypointDataset, config):
     anterior_ixs = [dataset.keypoint_ids[config["anterior"]]]
     posterior_ixs = [dataset.keypoint_ids[config["origin"]]]
     absolute_scales = []
-    for sess_i in range(dataset.n_sessions):
-        anterior_com = dataset.get_session(sess_i)[:, anterior_ixs].mean(axis=1)
-        posterior_com = dataset.get_session(sess_i)[:, posterior_ixs].mean(
+    for sess in dataset.sessions:
+        anterior_com = dataset.get_session(sess)[:, anterior_ixs].mean(axis=1)
+        posterior_com = dataset.get_session(sess)[:, posterior_ixs].mean(
             axis=1
         )
         absolute_scales.append(

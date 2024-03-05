@@ -273,15 +273,16 @@ class Dataset(object):
             _session_names=self._session_names,
         )
 
-    # important semantic difference for pytreee datasets: n_sessions is the
-    # number of sessions present in the data array, not the number of seeions
-    # known to the dataset (could be different after subsetting)
+    # important semantic point: n_sessions / sessions, (resp. bodies) describes
+    # the sessions actually present in the data array, not those known by the
+    # dataset object / assigned name-id pairs.
     n_sessions = property(lambda self: len(self.slices))
     n_bodies = property(lambda self: len(self._bodies_inv))
     sessions = property(lambda self: self.slices.keys())
     bodies = property(
         lambda self: set(self.sess_bodies[s] for s in self.sessions)
     )
+
 
 
 class KeypointDataset(Dataset):
@@ -697,4 +698,4 @@ class PytreeDataset:
     # number of sessions known to the dataset, not the number of sessions
     # present in the data array (could be different after subsetting)
     n_sessions = property(lambda self: len(self.slices))
-    n_bodies = property(lambda self: len(self.sess_bodies))
+    n_bodies = property(lambda self: len(self._bodies_inv))

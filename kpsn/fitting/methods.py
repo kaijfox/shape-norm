@@ -285,19 +285,15 @@ def fit(
     return checkpoint
 
 
-def load_and_prepare_dataset(
-    config: dict, modify=True, all_versions=False, allow_subsample=True
+def prepare_dataset(
+    dataset: Dataset,
+    config: dict,
+    modify=True,
+    all_versions=False,
 ):
-    """
-    Parameters
-    ----------
-    config : dict
-        Full config dictionary.
-    """
+    raw_dataset = dataset
     dataset = {}
-    dataset["raw"] = load_dataset(
-        config["dataset"], allow_subsample=allow_subsample
-    )
+    dataset["raw"] = raw_dataset
     dataset["aligned"], align_inverse = align(
         dataset["raw"], config["alignment"]
     )
@@ -319,6 +315,22 @@ def load_and_prepare_dataset(
         return dataset["train"], align_inverse
     else:
         return dataset["reduced"], align_inverse
+
+
+def load_and_prepare_dataset(
+    config: dict,
+    modify=True,
+    all_versions=False,
+    allow_subsample=True,
+):
+    """
+    Parameters
+    ----------
+    config : dict
+        Full config dictionary.
+    """
+    dataset = load_dataset(config["dataset"], allow_subsample=allow_subsample)
+    return prepare_dataset(dataset, config, modify, all_versions)
 
 
 def modify_dataset(model_dir: Path, dataset):
@@ -354,7 +366,7 @@ def load_fit(model_dir: Path, silent=False):
     model_dir : pathlib.Path
         Path to model directory.
     """
-
+    model_dir = Path(model_dir)
     if not (model_dir / "checkpoint.p").exists():
         if not silent:
             raise IOError(f"No checkpoint found in {model_dir}")

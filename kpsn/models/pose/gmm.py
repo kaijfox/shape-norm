@@ -15,6 +15,7 @@ import jax._src.random as prng
 from tensorflow_probability.substrates import jax as tfp
 from sklearn import mixture
 import matplotlib.pyplot as plt
+import seaborn as sns
 import jax.numpy as jnp
 import numpy as np
 import jax.random as jr
@@ -70,12 +71,13 @@ def calibrate_base_model(
         ).astype(int)
 
         bics = []
-        for n in ns:
+        for i, n in enumerate(ns):
             mix = _fit_gmm(
                 dataset,
                 int(n),
                 config["init"]["subsample"],
                 config["init"]["seed"],
+                large_dataset_ok=i != 0,
             )
             bics.append(mix.bic(init_pts))
         bics = jnp.array(bics)
@@ -109,6 +111,7 @@ def _fit_gmm(
     n_components,
     subsample,
     seed,
+    large_datset_ok=False,
 ):
     init_pts = dataset.get_session(dataset.ref_session)
 
@@ -121,7 +124,7 @@ def _fit_gmm(
             jr.PRNGKey(seed), init_pts, (n_frames,), replace=False
         )
 
-    if init_pts.shape[0] > 10000:
+    if init_pts.shape[0] > 10000 and not large_dataset_ok:
         logging.warn(
             "Reference session contains over 10000 frames. GMM calibration "
             "can be slow and memory intensive, but often does not require the "
@@ -171,6 +174,7 @@ def plot_calibration(config, colors):
     ax.set_yticks(ax.get_ylim())
     ax.set_yticklabels(["", ""])
     ax.set_title("Pose model component selection")
+    sns.despine(ax=ax)
     legend(ax)
     return fig
 
