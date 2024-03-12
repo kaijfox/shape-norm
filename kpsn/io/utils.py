@@ -24,10 +24,13 @@ def compute_n_splits(
         n_split = {s: count for s in dataset.sessions}
     else:
         n_split = {
-            s: int(
-                jnp.ceil(count / len(sessions))
-                if i < len(sessions) % count
-                else jnp.floor(count / len(sessions))
+            s: max(
+                int(
+                    jnp.ceil(count / len(sessions))
+                    if i < len(sessions) % count
+                    else jnp.floor(count / len(sessions))
+                ),
+                1,
             )
             for b, sessions in dataset._bodies_inv.items()
             for i, s in enumerate(dataset.sessions)
@@ -45,14 +48,17 @@ def split_body_inv(
     n_split = compute_n_splits(dataset, split_all, mode, count)
     # split sessions according to n_split
     body_inv = defaultdict(list)
+    source_session_inv = defaultdict(list)
     for b, ss in dataset._bodies_inv.items():
         for s in ss:
             if n_split[s] == 1:
                 body_inv[b].append(s)
+                source_session_inv[s].append(s)
                 continue
             for i in range(n_split[s]):
                 body_inv[b].append(f"{s}.{i}")
-    return dict(body_inv)
+                source_session_inv[s].append(f"{s}.{i}")
+    return dict(body_inv), dict(source_session_inv)
 
 
 def split_sessions(

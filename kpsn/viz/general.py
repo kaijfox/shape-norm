@@ -6,7 +6,9 @@ from .util import plot_mouse_views, select_frame_gallery, axes_off, legend
 
 import matplotlib.pyplot as plt
 
-
+from line_profiler import LineProfiler
+profiler = LineProfiler()
+@profiler
 def session_means(config: dict, colors: colorset = None):
     """Plot mean pose for each session.
 
@@ -34,6 +36,7 @@ def session_means(config: dict, colors: colorset = None):
         )
         ax[0, i].set_title(session)
 
+    axes_off(ax)
     fig.suptitle("Subject mean poses")
     return fig
 

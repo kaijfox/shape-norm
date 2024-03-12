@@ -111,7 +111,7 @@ def _fit_gmm(
     n_components,
     subsample,
     seed,
-    large_datset_ok=False,
+    large_dataset_ok=False,
 ):
     init_pts = dataset.get_session(dataset.ref_session)
 

@@ -276,10 +276,12 @@ def gmm_components(checkpoint: dict, colors: colorset = None):
     axes_off(ax)
 
     # weights figure
-    weights_fig, ax = plt.subplots(figsize=(3.5, 2))
-    mappable = ax.imshow(params.subj_weights)
-    ax.set_yticks(range(len(dataset.sessions)))
-    ax.set_yticklabels(
+    weights_fig, ax = plt.subplots(
+        figsize=(params.n_subjects * 0.2 + 1, params.n_components * 0.2 + 0.5)
+    )
+    mappable = ax.imshow(params.subj_weights.T)
+    ax.set_xticks(range(len(dataset.sessions)))
+    ax.set_xticklabels(
         [
             (
                 "(ref) "
@@ -288,7 +290,8 @@ def gmm_components(checkpoint: dict, colors: colorset = None):
             )
             + dataset._session_names[i]
             for i in range(len(dataset.sessions))
-        ]
+        ],
+        rotation=80,
     )
     weights_fig.colorbar(mappable)
 
@@ -433,13 +436,14 @@ def display_clip_across_bodies(
     start,
     end,
     window_size,
-    source_session = None,
+    source_session=None,
     n_cols=3,
     fixed_crop=False,
     subject_size=0.8,
     colors: colorset = None,
     font_scale=0.5,
     fps=30.0,
+    progress=False
 ):
     """Display a video clip across all bodies in a session."""
 
@@ -456,7 +460,7 @@ def display_clip_across_bodies(
     if source_session is None:
         source_session = dataset.ref_session
     video, video_kpts = load_videos(
-        config["dataset"], start, end, [source_session]
+        config["dataset"], start, end, [source_session], progress=progress
     )
     frames = video[source_session]
     anterior_ix = config["dataset"]["viz"]["anterior_ix"]

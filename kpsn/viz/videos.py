@@ -1,6 +1,7 @@
 from ..io.loaders import _get_root_path
 from ..io.armature import Armature
 from .util import plot_mouse
+from ..models.util import _optional_pbar
 
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -89,7 +90,7 @@ def _choose_anterior_posterior_keypoints(config, frame=0):
     plt.show()
 
 
-def load_videos(config, start, end, whitelist=None):
+def load_videos(config, start, end, whitelist=None, progress=False):
     """
     Parameters
     ----------
@@ -116,10 +117,14 @@ def load_videos(config, start, end, whitelist=None):
         keypt_path = Path(keypt_root) / video_dict[session]["keypoints"]
 
         # read segment of the video
+        print("video path", video_path)
         cap = cv2.VideoCapture(str(video_path))
         cap.set(cv2.CAP_PROP_POS_FRAMES, start)
         frames = []
-        for i in range(end):
+        for i in _optional_pbar(
+            np.arange(end),
+            f"Loading {session}" if progress is not False else False,
+        ):
             res, frame = cap.read()
             if res:
                 if display_range is not None:
@@ -262,6 +267,7 @@ def _overlay_keypoints(
     line_width=1,
     copy=False,
     opacity=1.0,
+    progress=False,
 ):
     """Overlay keypoints on an image.
 
@@ -305,7 +311,7 @@ def _overlay_keypoints(
         canvas = image
 
     if canvas.ndim > 3:
-        for i in range(canvas.shape[0]):
+        for i in _optional_pbar(range(canvas.shape[0]), progress):
             canvas[i] = _overlay_keypoints(
                 canvas[i],
                 keypoints[i],

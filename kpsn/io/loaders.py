@@ -62,10 +62,15 @@ def _get_root_path(paths: dict):
         if i > 100:
             root = ()
             break
-    return (
-        str(Path(*root[:-1])),
-        {k: str(Path(*fp[len(root) - 1 :])) for k, fp in paths.items()},
-    )
+    if len(root):
+        return (
+            str(Path(*root[:-1])),
+            {k: str(Path(*fp[len(root) - 1 :])) for k, fp in paths.items()},
+        )
+    else:
+        return "", {
+            k: str(Path(*fp)) for k, fp in paths.items()
+        }
 
 
 def _session_file_config(

@@ -18,7 +18,12 @@ from ..io.utils import split_body_inv
 from ..logging import ArrayTrace
 from ..models.joint import JointModelParams, JointModel
 from ..models.instantiation import get_model
-from ..models.util import apply_bodies, reconst_errs
+from ..models.util import (
+    apply_bodies,
+    reconst_errs,
+    induced_reference_keypoints,
+    _optional_pbar,
+)
 from ..clouds import PointCloudDensity, ball_cloud_js
 from .methods import load_fit
 
@@ -28,6 +33,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import logging
 import shutil
+import tqdm
 
 
 def setup_scan_config(
@@ -148,7 +154,7 @@ def load_scan_dataset(
     )
 
 
-def _dataset_and_bodies_inv(project, model_name):
+def _dataset_and_bodies_inv(project, model_name, return_session_inv=False):
 
     cfg = load_model_config(project.model_config(model_name))
     dataset_orig, _ = load_and_prepare_dataset(cfg, modify=False)
@@ -159,17 +165,25 @@ def _dataset_and_bodies_inv(project, model_name):
         raise ValueError("This analysis is only for fits of type 'split'.")
 
     # map from original dataset bodies to sessions in the split dataset
-    _body_inv = split_body_inv(
+    _body_inv, _session_inv = split_body_inv(
         dataset_orig,
         cfg["fit"]["split_all"],
         cfg["fit"]["split_type"],
         cfg["fit"]["split_count"],
     )
+
+    if return_session_inv:
+        return dataset, (_body_inv, _session_inv), _inflate
     return dataset, _body_inv, _inflate
 
 
 def model_withinbody_reconst_errs(
-    project, model_name, dataset=None, _body_inv=None, _inflate=None
+    project,
+    model_name,
+    dataset=None,
+    _body_inv=None,
+    _inflate=None,
+    progress=False,
 ):
     """Keypoint errors induced by morphing across examples of the same body
     in a split-dataset scan."""
@@ -190,7 +204,8 @@ def model_withinbody_reconst_errs(
     global_ref_body = dataset.sess_bodies[dataset.ref_session]
 
     errs = {}
-    for b in _body_inv:
+    pbar = _optional_pbar(_body_inv[b], progress)
+    for b in pbar:
         nonref_sessions = _body_inv[b][1:]
         ref_body = dataset.sess_bodies[_body_inv[b][0]]
         # nonref sessions mapped to canonical pose space
@@ -224,7 +239,56 @@ def model_withinbody_reconst_errs(
     return errs
 
 
-def withinbody_reconst_errs(project, scan_name):
+def model_withinbody_induced_errs(
+    project,
+    model_name,
+    dataset=None,
+    _body_inv=None,
+):
+    """Keypoint errors induced by morphing across examples of the same body
+    in a split-dataset scan."""
+
+    # for each body in the dataset, calculate the reconstruction error
+    # after morphing to a within-body reference session of the model that
+    # did not know these bodies should be identical
+
+    checkpoint = load_fit(project.model(model_name))
+    cfg = checkpoint["config"]
+    if dataset is None:
+        dataset, _body_inv, _inflate = _dataset_and_bodies_inv(
+            project, model_name
+        )
+    model = get_model(cfg)
+
+    induced_kpts = induced_reference_keypoints(
+        dataset,
+        cfg,
+        model.morph,
+        checkpoint["params"].morph,
+        to_body=None,  # map to all bodies
+        include_reference=True,
+    )
+
+    errs = {}
+    for b in _body_inv:
+        # _body_inv: map (pre-split) body to sessions with that body
+        # Now map sessions in _body_inv[b] to their (post-split) body name
+        # Also separate out into a reference session within _body_inv[b] (the
+        # first) entry and the other sessions
+        body_ref = dataset.sess_bodies[_body_inv[b][0]]
+        nonref_sessions = _body_inv[b][1:]
+        nonref_bodies = [dataset.sess_bodies[s] for s in nonref_sessions]
+        # induced_kpts is indexed by (post-split) body names
+        # measure errors between the reference session for this (pre-split)
+        # body, that is `body_ref` and each of the non-reference sessions
+        errs[b] = {
+            s: reconst_errs(induced_kpts[b], induced_kpts[body_ref])
+            for b, s in zip(nonref_bodies, nonref_sessions)
+        }
+    return errs
+
+
+def withinbody_reconst_errs(project, scan_name, progress=False):
     """Keypoint errors induced by morphing across examples of the same body for
     each model in a scan."""
     if isinstance(scan_name, str):
@@ -240,8 +304,51 @@ def withinbody_reconst_errs(project, scan_name):
             dataset=dataset,
             _body_inv=_body_inv,
             _inflate=_inflate,
+            progress=model if progress else False,
         )
         for model in models
+    }
+
+
+def withinbody_induced_errs(project, scan_name, progress=False):
+    """Keypoint errors induced by morphing across examples of the same body for
+    each model in a scan."""
+    if isinstance(scan_name, str):
+        scan_cfg = load_config(project.scan(scan_name) / "scan.yml")
+        models = list(scan_cfg["models"].keys())
+    else:
+        models = scan_name
+    dataset, _body_inv, _ = _dataset_and_bodies_inv(project, models[0])
+    return {
+        model: model_withinbody_induced_errs(
+            project,
+            model,
+            dataset=dataset,
+            _body_inv=_body_inv,
+        )
+        for model in _optional_pbar(models, progress)
+    }
+
+
+def withinsession_induced_errs(project, scan_name, progress=False):
+    """Keypoint errors induced by morphing across examples of the same session
+    for each model in a scan with split_all = True."""
+    if isinstance(scan_name, str):
+        scan_cfg = load_config(project.scan(scan_name) / "scan.yml")
+        models = list(scan_cfg["models"].keys())
+    else:
+        models = scan_name
+    dataset, (_body_inv, _session_inv), _ = _dataset_and_bodies_inv(
+        project, models[0], return_session_inv=True
+    )
+    return _body_inv, {
+        model: model_withinbody_induced_errs(
+            project,
+            model,
+            dataset=dataset,
+            _body_inv=_session_inv,
+        )
+        for model in _optional_pbar(models, progress)
     }
 
 
@@ -251,6 +358,7 @@ def base_jsds_to_reference(
     dataset=None,
     _body_inv=None,
     ref_cloud=None,
+    progress=False,
 ):
     """
     Compute JSDs to reference session for each body in the dataset.
@@ -266,6 +374,7 @@ def base_jsds_to_reference(
         )
 
     # transform all sessions to the global reference session's body
+    pbar = _optional_pbar(_body_inv, progress)
     jsds = {
         b: {
             s: ball_cloud_js(
@@ -274,7 +383,7 @@ def base_jsds_to_reference(
             )
             for s in _body_inv[b]
         }
-        for b in _body_inv
+        for b in pbar
     }
 
     return jsds
@@ -286,6 +395,7 @@ def model_jsds_to_reference(
     dataset=None,
     _body_inv=None,
     ref_cloud=None,
+    progress=False,
 ):
     cfg = load_model_config(project.model_config(model_name))
     if dataset is None:
@@ -298,7 +408,8 @@ def model_jsds_to_reference(
 
     # transform all sessions to the global reference session's body
     jsds = {}
-    for b in _body_inv:
+    pbar = _optional_pbar(_body_inv, progress)
+    for b in pbar:
         ref_body = dataset.sess_bodies[dataset.ref_session]
         subset = dataset.session_subset(_body_inv[b], bad_ref_ok=True)
         mapped = apply_bodies(
@@ -320,7 +431,7 @@ def model_jsds_to_reference(
     return jsds
 
 
-def jsds_to_reference(project, scan_name):
+def jsds_to_reference(project, scan_name, progress=False):
     """JS distances to reference session for each model in a scan."""
     if isinstance(scan_name, str):
         scan_cfg = load_config(project.scan(scan_name) / "scan.yml")
@@ -338,11 +449,16 @@ def jsds_to_reference(project, scan_name):
             dataset=dataset,
             _body_inv=_body_inv,
             ref_cloud=ref_cloud,
+            progress=str(model) if progress else False,
         )
         for model in models
     }
     base_jsds = base_jsds_to_reference(
-        project, dataset=dataset, _body_inv=_body_inv, ref_cloud=ref_cloud
+        project,
+        dataset=dataset,
+        _body_inv=_body_inv,
+        ref_cloud=ref_cloud,
+        progress="Unmorphed",
     )
     return model_jsds, base_jsds, dataset
 

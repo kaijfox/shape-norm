@@ -184,8 +184,28 @@ def axes_off(ax):
     sns.despine(ax=ax, left=True, bottom=True)
 
 
-def legend(ax):
-    ax.legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=False)
+def legend(ax, handles_labels=None):
+    if handles_labels is not None:
+        ax.legend(
+            *handles_labels,
+            loc="center left",
+            bbox_to_anchor=(1, 0.5),
+            frameon=False,
+        )
+    else:
+        ax.legend(loc="center left", bbox_to_anchor=(1, 0.5), frameon=False)
+
+
+def unique_handles(ax):
+    handles, labels = ax.get_legend_handles_labels()
+    newLabels, newHandles = [], []
+    labelSet = set()
+    for handle, label in zip(handles, labels):
+        if label not in labelSet:
+            newLabels.append(label)
+            newHandles.append(handle)
+            labelSet.add(label)
+    return newHandles, newLabels
 
 
 def jitter_points(
