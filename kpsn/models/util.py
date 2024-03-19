@@ -240,14 +240,17 @@ def _deprecated_induced_keypoint_distances(
         )
 
 
-def reconst_errs(kpts_a, kpts_b):
+def reconst_errs(kpts_a, kpts_b, average=True):
     """
     Parameters
     ----------
     kpts_a, kpts_b : array shape (n_frame, n_keypoints, n_spatial)
         Array of keypoints, such as a session from a KeypointDataset.
     """
-    return jla.norm(kpts_a - kpts_b, axis=-1).mean(axis=0)
+    if average:
+        return jla.norm(kpts_a - kpts_b, axis=-1).mean(axis=0)
+    else:
+        return jla.norm(kpts_a - kpts_b, axis=-1)
 
 
 def _optional_pbar(iterable, flag):

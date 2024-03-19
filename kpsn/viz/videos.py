@@ -1,7 +1,10 @@
 from ..io.loaders import _get_root_path
 from ..io.armature import Armature
 from .util import plot_mouse
-from ..models.util import _optional_pbar
+from ..io.utils import stack_dict
+from ..models.util import _optional_pbar, apply_bodies
+from ..models.instantiation import get_model
+from ..fitting.methods import load_and_prepare_dataset
 
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -9,6 +12,32 @@ import cv2
 import numpy as np
 import imageio.v3 as iio
 import logging
+from matplotlib import colors as plt_colors
+
+
+from ..logging import ArrayTrace
+from .util import (
+    plot_mouse,
+    find_nearest_frames,
+    select_frame_gallery,
+    plot_mouse_views,
+    legend,
+    axes_off,
+    flat_grid,
+    select_frame_gallery,
+)
+from ..io.utils import stack_dict
+from ..models.morph.lowrank_affine import LRAParams, model as lra_model
+from .styles import colorset
+from ..io.loaders import load_dataset
+from ..fitting.methods import load_and_prepare_dataset, load_fit
+from ..io.armature import Armature
+from ..models.util import apply_bodies, _optional_pbar
+from ..io.features import inflate
+from ..project.paths import Project
+from ..config import load_model_config
+from ..models.instantiation import get_model
+from ..fitting.scans import merge_param_hist_with_hyperparams
 
 
 def add_videos_to_config(
@@ -432,3 +461,169 @@ def write_video(path, frames, fps, show_frame_numbers=False):
                 )
 
             writer.write_frame(frame)
+
+
+def map_clip_across_bodies(
+    checkpoint, start, end, dataset=None, model=None, source_session=None
+):
+    params = checkpoint["params"].morph
+    cfg = checkpoint["config"]
+    if dataset is None:
+        dataset, _ = load_and_prepare_dataset(cfg, allow_subsample=False)
+    if model is None:
+        model = get_model(cfg)
+    if source_session is None:
+        source_session = dataset.ref_session
+
+    ref_body = dataset.sess_bodies[source_session]
+    ref_kpt_frames = dataset.get_session(source_session)[start:end]
+    new_data, slices = stack_dict(
+        {f"s-{b}": ref_kpt_frames for b in dataset.bodies}
+    )
+    new_bodies = {f"s-{b}": ref_body for b in dataset.bodies}
+    short_data = dataset.with_sessions(
+        new_data,
+        slices,
+        new_bodies,
+        f"s-{ref_body}",
+        _body_names=dataset._body_names,
+    )
+    # map each session onto the body for which the session is named
+    return (
+        apply_bodies(
+            model.morph,
+            params,
+            short_data,
+            {f"s-{b}": b for b in dataset.bodies},
+        ),
+        short_data.get_session(short_data.ref_session),
+    )
+
+
+def overlay_tiles_for_bodies(
+    ref_keypts,
+    mapped_dataset,
+    bodies,
+    fixed_crop=False,
+    subject_size=0.8,
+    window_size=200,
+    progress=True,
+    colors: colorset = None,
+    _inflate=None,
+    armature=None,
+    config=None,
+    pal=None,
+):
+
+    if colors is None:
+        colors = colorset.active
+    if _inflate is None:
+        _inflate = lambda arr: inflate(arr, config["features"])
+    if armature is None:
+        armature = Armature.from_config(config["dataset"])
+    if pal is None:
+        pal = dict(zip(bodies, colors.cts1(len(bodies))))
+
+    inflated_ref = _inflate(ref_keypts)
+    xaxis = 0
+    mapped_tiles = {}
+
+    for view_name, yaxis in zip(["top", "side"], [2, 1]):
+        # align the reference an egocentric view and record params of the view
+        # to align the mapped sessions as well
+        rc, rh, rs = _scalar_summaries(
+            inflated_ref[..., [xaxis, yaxis]],
+            armature=armature,
+        )
+        if view_name == "side":
+            rh *= 0  # do not rotate side view
+        keypt_scale = rs.max() * 2 / subject_size
+
+        ref_kpt_frames = _egocentric_window_align(
+            np.array(inflated_ref[..., [xaxis, yaxis]]),
+            rc,
+            rh,
+            keypt_scale,
+            window_size,
+            fixed_crop,
+        )
+        # plot the reference session keypoints
+        backdrop = np.zeros([len(ref_keypts), window_size, window_size, 3])
+        ref_tile = _overlay_keypoints(
+            backdrop,
+            ref_kpt_frames,
+            armature,
+            keypoint_colors=plt_colors.to_rgb(colors.subtle),
+        )
+
+        mapped_tiles[view_name] = {}
+        # align mapped sessions to the egocentric view from above and overlay
+        # atop the reference session keypoints
+        for b in _optional_pbar(
+                bodies, f"Rendering {view_name}" if progress else False
+            ):
+            inflated = _inflate(mapped_dataset.get_session(f"s-{b}"))[
+                ..., [xaxis, yaxis]
+            ]
+            scaled = _egocentric_window_align(
+                np.array(inflated),
+                rc,
+                rh,
+                keypt_scale,
+                window_size,
+                fixed_crop,
+            )
+            mapped_tiles[view_name][b] = _overlay_keypoints(
+                ref_tile, scaled, armature, keypoint_colors=pal[b], copy=True
+            )
+
+    return mapped_tiles
+
+
+def join_view_tiles(
+    bodies,
+    mapped_tiles,
+    n_cols,
+    font_scale=0.5,
+):
+
+    n_cols = int(min(n_cols, len(bodies)))
+    n_rows = int(np.ceil(len(bodies) / n_cols))
+    n_frames = mapped_tiles["top"][bodies[0]].shape[0]
+    window_size = mapped_tiles["top"][bodies[0]].shape[-2]
+
+    # stack the various tiles together
+    tiles = np.zeros(
+        [n_rows, 2 * n_cols, n_frames, window_size, window_size, 3]
+    )
+    header_height = window_size // 4
+    headers = np.zeros([n_rows, n_cols, header_height, window_size * 2, 3])
+    for i, b in enumerate(bodies):
+        r, c = (i // n_cols, i % n_cols)
+        c = 2 * c
+        tiles[r, c] = mapped_tiles["top"][b]
+        tiles[r, c + 1] = mapped_tiles["side"][b]
+
+        headers[r, i % n_cols] = cv2.putText(
+            headers[r, i % n_cols],
+            b,
+            (2, header_height // 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    # join tiles and headers into one large video
+    # concatenate tiles within each row
+    headers = np.concatenate(np.swapaxes(headers, 0, 1), axis=-2)
+    tiles = np.concatenate(tiles.swapaxes(0, 1), axis=-2)
+    # alterate tiles and headers in columns and concatenate columns
+    headers = np.broadcast_to(
+        headers[:, None], tiles.shape[:2] + headers.shape[1:]
+    )
+    interleaved = np.concatenate([headers, tiles], axis=-3)
+    tiled_vid = np.concatenate(interleaved, axis=-3)
+
+    return tiled_vid
