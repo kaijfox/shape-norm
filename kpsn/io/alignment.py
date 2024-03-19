@@ -27,9 +27,7 @@ def _align_scales(dataset: KeypointDataset, config):
     absolute_scales = []
     for sess in dataset.sessions:
         anterior_com = dataset.get_session(sess)[:, anterior_ixs].mean(axis=1)
-        posterior_com = dataset.get_session(sess)[:, posterior_ixs].mean(
-            axis=1
-        )
+        posterior_com = dataset.get_session(sess)[:, posterior_ixs].mean(axis=1)
         absolute_scales.append(
             jnp.median(jla.norm(anterior_com - posterior_com, axis=-1), axis=0)
         )
@@ -111,7 +109,7 @@ class sagittal(AlignmentMethod):
         return scaled, {"centroid": com, "angle": theta, "scale": scales}
 
     @staticmethod
-    def _inverse(dataset, align_meta, config):
+    def _inverse(dataset, align_meta, config, scale=True):
         """
 
         Parameters
@@ -121,13 +119,17 @@ class sagittal(AlignmentMethod):
             Metadata required to invert alignment, as returned by `sagittal_align`
         config : dict
             `alignment` section of config file.
+        scale : bool
+            If `False`, do not invert rigid scale transformation.
 
         Returns
         -------
         dataset : KeypointDataset
         """
-        if config["rescale"]:
+        if config["rescale"] and scale:
             aligned = _inverse_align_scales(dataset, align_meta["scale"])
+        else:
+            aligned = dataset
 
         R = Rotation.from_rotvec(
             (align_meta["angle"][:, None]) * jnp.array([0, 0, 1])[None, :]
@@ -203,7 +205,7 @@ default_alignment_type = "sagittal"
 
 
 def align(dataset: KeypointDataset, config: dict):
-    """Reduce keypoint dataset to non-singular features.
+    """Align keypoint data to egocentric coordinates
 
     dataset : Dataset
     config : dict
@@ -219,3 +221,15 @@ def align(dataset: KeypointDataset, config: dict):
     if aln_type not in alignment_types:
         raise NotImplementedError(f"Unknown dataset type: {aln_type}")
     return alignment_types[aln_type]._align(dataset, config)
+
+
+def invert_align(
+    dataset: KeypointDataset, align_meta: dict, config: dict, **kwargs
+):
+    """Invert alignment of keypoint data to egocentric coordinates."""
+    aln_type = config["type"]
+    if aln_type not in alignment_types:
+        raise NotImplementedError(f"Unknown dataset type: {aln_type}")
+    return alignment_types[aln_type]._inverse(
+        dataset, align_meta, config, **kwargs
+    )
