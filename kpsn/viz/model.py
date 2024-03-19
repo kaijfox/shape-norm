@@ -23,7 +23,7 @@ from .styles import colorset
 from ..io.loaders import load_dataset
 from ..fitting.methods import load_and_prepare_dataset, load_fit
 from ..io.armature import Armature
-from ..models.util import apply_bodies
+from ..models.util import apply_bodies, _optional_pbar
 from ..io.features import inflate
 from ..project.paths import Project
 from ..config import load_model_config
@@ -115,18 +115,28 @@ def em_loss(checkpoint, mstep_relative=True, colors: colorset = None):
     return fig
 
 
-def lra_centroid_and_modes(checkpoint: dict, colors: colorset = None):
+def lra_centroid_and_modes(
+    checkpoint: dict,
+    colors: colorset = None,
+    progress=False,
+    body_whitelist=None,
+    pal=None,
+    params=None,
+):
     if colors is None:
         colors = colorset.active
-    params: LRAParams = checkpoint["params"].morph
-    config = _insert_calibration_data_to_checkpoint_config(checkpoint)
+    config = checkpoint["config"]
     dataset, _ = load_and_prepare_dataset(config)
     armature = Armature.from_config(config["dataset"])
+    bodies = dataset.bodies if body_whitelist is None else body_whitelist
+
+    if params is None:
+        params: LRAParams = checkpoint["params"].morph
 
     fig, ax = plt.subplots(
         (params.n_dims * 2 + 2),
-        params.n_bodies,
-        figsize=(1.7 * params.n_bodies, 1.2 * (params.n_dims * 2 + 2)),
+        len(bodies),
+        figsize=(1.7 * len(bodies), 1.2 * (params.n_dims * 2 + 2)),
         sharex=True,
         sharey=True,
     )
@@ -136,17 +146,21 @@ def lra_centroid_and_modes(checkpoint: dict, colors: colorset = None):
         ax[row, col], _inflate(arr), armature, 0, yaxis, color=color, **kw
     )
 
-    pal = colors.cts1(params.n_bodies)
+    if pal is None:
+        pal = dict(zip(bodies, colors.cts1(len(bodies))))
     neut = colors.neutral
     sbtl = colors.subtle
     mode_scale = 10
-    for i_body in range(params.n_bodies):
-        ax[0, i_body].set_title(dataset._body_names[i_body])
+    i_body = 0
+    for body_id, body in _optional_pbar(dataset._body_names.items(), progress):
+        if body not in body_whitelist:
+            continue
+        ax[0, i_body].set_title(body)
         for i_row, row_y in enumerate([2, 1]):
             # -- plot centroid
-            ctr = params.offset + params.offset_updates[i_body]
+            ctr = params.offset + params.offset_updates[body_id]
             ref = f"{dataset.ref_session}\n(ref)"
-            _plot(i_row, i_body, ctr, row_y, pal[i_body])
+            _plot(i_row, i_body, ctr, row_y, pal[body])
             ax[0, 0].set_ylabel("centroid")
             if i_body != params.ref_body:
                 ref_ctr = params.offset + params.offset_updates[params.ref_body]
@@ -156,7 +170,7 @@ def lra_centroid_and_modes(checkpoint: dict, colors: colorset = None):
             for i_mode in range(params.n_dims):
                 mode = ctr + mode_scale * (
                     params.modes[:, i_mode]
-                    + params.mode_updates[i_body, :, i_mode]
+                    + params.mode_updates[body_id, :, i_mode]
                 )
                 _ax = (2 + 2 * i_mode + i_row, i_body)
                 _plot(
@@ -168,9 +182,10 @@ def lra_centroid_and_modes(checkpoint: dict, colors: colorset = None):
                     label="centroid",
                     line_kw={"lw": 0.5},
                 )
-                _plot(*_ax, mode, row_y, pal[i_body], label=f"mode {i_mode}")
+                _plot(*_ax, mode, row_y, pal[body], label=f"mode {i_mode}")
                 if i_row == 0:
                     ax[_ax[0], 0].set_ylabel(f"mode {i_mode}")
+        i_body += 1
 
     axes_off(ax)
     for a in ax[::2, -1]:
@@ -179,7 +194,9 @@ def lra_centroid_and_modes(checkpoint: dict, colors: colorset = None):
     return fig
 
 
-def lra_param_convergence(checkpoint: dict, colors: colorset = None):
+def lra_param_convergence(
+    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False
+):
     if colors is None:
         colors = colorset.active
 
@@ -189,6 +206,14 @@ def lra_param_convergence(checkpoint: dict, colors: colorset = None):
     param_hist = merge_param_hist_with_hyperparams(
         model, checkpoint["params"], checkpoint["meta"]["param_hist"]
     )
+
+    # hacky: param_hist.ref_body becomes an array, but will be used in .at[].set
+    # so we would prefer it be a scalar
+    param_hist.morph._tree["ref_body"] = param_hist.morph.ref_body[0]
+
+    step = jnp.concatenate([jnp.array([0]), checkpoint["meta"].get(
+        "gd_step", np.arange(1, len(param_hist.morph.offset_updates))
+    )])[::stepsize]
     n_bodies = int(param_hist.morph.n_bodies[0])
     n_dims = int(param_hist.morph.n_dims[0])
     pal = colors.make("Spectral")(n_bodies)
@@ -201,13 +226,14 @@ def lra_param_convergence(checkpoint: dict, colors: colorset = None):
     )
     ax = np.atleast_2d(ax.T).T
     i_ax = 0
-    for i_body in range(n_bodies):
-        if i_body == param_hist.morph.ref_body[0]:
+    for i_body in _optional_pbar(range(n_bodies), progress):
+        if i_body == param_hist.morph.ref_body:
             continue
         for i_mode in range(n_dims):
             upds = param_hist.morph.mode_updates[:, i_body, :, i_mode]
             ax[i_mode, i_ax].plot(
-                upds,
+                step,
+                upds[::stepsize],
                 color=pal[i_body],
                 lw=0.5,
                 label=[i_body] + [None] * (upds.shape[-1] - 1),
@@ -215,7 +241,9 @@ def lra_param_convergence(checkpoint: dict, colors: colorset = None):
             ax[0, i_ax].set_title(_dataset._body_names[i_body])
             ax[i_mode, 0].set_ylabel(f"pc {i_mode}")
         upds = param_hist.morph.offset_updates[:, i_body, :]
-        ax[-1, i_ax].plot(upds, color=pal[i_body], lw=0.5)
+        ax[-1, i_ax].plot(
+            step, upds[::stepsize], color=pal[i_body], lw=0.5
+        )
         i_ax += 1
 
     ax[-1, 0].set_xlabel("iteration [m-steps]")
@@ -223,7 +251,9 @@ def lra_param_convergence(checkpoint: dict, colors: colorset = None):
     return fig
 
 
-def gmm_param_convergence(checkpoint: dict, colors: colorset = None):
+def gmm_param_convergence(
+    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False
+):
     if colors is None:
         colors = colorset.active
     cfg = _insert_calibration_data_to_checkpoint_config(checkpoint)
@@ -234,20 +264,27 @@ def gmm_param_convergence(checkpoint: dict, colors: colorset = None):
     )
     n_sessions = int(param_hist.pose.n_sessions[0])
     n_components = int(param_hist.pose.n_components[0])
+    step = jnp.concatenate([jnp.array([0]), checkpoint["meta"].get(
+        "gd_step", np.arange(1, len(param_hist.morph.offset_updates))
+    )])[::stepsize]
     pal = colors.make("Spectral")(n_sessions)
     fig, ax = plt.subplots(
         n_components,
         n_sessions + 1,
         figsize=(1.5 * n_sessions + 1.5, 1.5 * n_components),
     )
-    for i_comp in range(n_components):
+    for i_comp in _optional_pbar(range(n_components), progress):
         weights = param_hist.pose.subj_weights[..., i_comp]
         means = param_hist.pose.means[..., i_comp, :]
         for i_sess in range(n_sessions):
-            ax[i_comp, i_sess].plot(weights[:, i_sess], color=pal[i_sess])
+            ax[i_comp, i_sess].plot(
+                step, weights[::stepsize, i_sess], color=pal[i_sess]
+            )
             ax[i_comp, i_sess].set_ylim(0, param_hist.pose.subj_weights.max())
             ax[0, i_sess].set_title(_dataset._session_names[i_sess])
-        ax[i_comp, -1].plot(means, color=colors.neutral, lw=0.5)
+        ax[i_comp, -1].plot(
+            step, means[::stepsize], color=colors.neutral, lw=0.5
+        )
         ax[i_comp, 0].set_ylabel(f"comp {i_comp}")
     ax[0, -1].set_title("Mean")
 
@@ -277,7 +314,7 @@ def gmm_components(checkpoint: dict, colors: colorset = None):
 
     # weights figure
     weights_fig, ax = plt.subplots(
-        figsize=(params.n_subjects * 0.2 + 1, params.n_components * 0.2 + 0.5)
+        figsize=(params.n_sessions * 0.2 + 1, params.n_components * 0.2 + 0.5)
     )
     mappable = ax.imshow(params.subj_weights.T)
     ax.set_xticks(range(len(dataset.sessions)))
@@ -443,7 +480,8 @@ def display_clip_across_bodies(
     colors: colorset = None,
     font_scale=0.5,
     fps=30.0,
-    progress=False
+    progress=False,
+    use_raw_video=True,
 ):
     """Display a video clip across all bodies in a session."""
 
@@ -459,20 +497,21 @@ def display_clip_across_bodies(
 
     if source_session is None:
         source_session = dataset.ref_session
-    video, video_kpts = load_videos(
-        config["dataset"], start, end, [source_session], progress=progress
-    )
-    frames = video[source_session]
-    anterior_ix = config["dataset"]["viz"]["anterior_ix"]
-    posterior_ix = config["dataset"]["viz"]["posterior_ix"]
-    c, h, s = _scalar_summaries(
-        video_kpts[source_session], anterior_ix, posterior_ix
-    )
+    if use_raw_video:
+        video, video_kpts = load_videos(
+            config["dataset"], start, end, [source_session], progress=progress
+        )
+        frames = video[source_session]
+        anterior_ix = config["dataset"]["viz"]["anterior_ix"]
+        posterior_ix = config["dataset"]["viz"]["posterior_ix"]
+        c, h, s = _scalar_summaries(
+            video_kpts[source_session], anterior_ix, posterior_ix
+        )
 
-    raw_window_size = int(np.ceil(s.max() * 2 / subject_size))
-    video_tile = _egocentric_crop(
-        frames, c, h, raw_window_size, window_size, fixed_crop
-    )
+        raw_window_size = int(np.ceil(s.max() * 2 / subject_size))
+        video_tile = _egocentric_crop(
+            frames, c, h, raw_window_size, window_size, fixed_crop
+        )
 
     # create a dataset with a session for each body, all containing identical
     # data: the clip from the source session
@@ -521,7 +560,7 @@ def display_clip_across_bodies(
             fixed_crop,
         )
         # plot the reference session keypoints
-        backdrop = np.zeros_like(video_tile)
+        backdrop = np.zeros([end - start, window_size, window_size, 3])
         ref_tile = _overlay_keypoints(
             backdrop,
             ref_kpt_frames,
@@ -532,7 +571,11 @@ def display_clip_across_bodies(
         mapped_tiles[view_name] = {}
         # align mapped sessions to the egocentric view from above and overlay
         # atop the reference session keypoints
-        for i, b in enumerate(dataset.bodies):
+        for i, b in enumerate(
+            _optional_pbar(
+                dataset.bodies, f"Rendering {view_name}" if progress else False
+            )
+        ):
             inflated = _inflate(mapped.get_session(f"s-{b}"))[
                 ..., [xaxis, yaxis]
             ]
@@ -547,6 +590,7 @@ def display_clip_across_bodies(
             mapped_tiles[view_name][b] = _overlay_keypoints(
                 ref_tile, scaled, armature, keypoint_colors=pal[i], copy=True
             )
+            # mapped_tiles[view_name][b] = ref_tile
 
     # stack the various tiles together
     n_cols = int(min(n_cols, dataset.n_bodies))
@@ -554,7 +598,6 @@ def display_clip_across_bodies(
     tiles = np.zeros(
         [n_rows, 2 * n_cols + 1, end - start, window_size, window_size, 3]
     )
-    tiles[0, 0] = video_tile
     header_height = window_size // 4
     header_buff = np.zeros([n_rows, 1, header_height, window_size, 3])
     headers = np.zeros([n_rows, n_cols, header_height, window_size * 2, 3])
@@ -567,6 +610,7 @@ def display_clip_across_bodies(
         c = 2 * c + 1
         tiles[r, c] = mapped_tiles["top"][b]
         tiles[r, c + 1] = mapped_tiles["side"][b]
+
         headers[r, i % n_cols] = cv2.putText(
             headers[r, i % n_cols],
             b,
@@ -577,6 +621,12 @@ def display_clip_across_bodies(
             1,
             cv2.LINE_AA,
         )
+
+    if use_raw_video:
+        tiles[0, 0] = video_tile
+    else:
+        tiles = tiles[:, 1:]
+        header_buff = header_buff[..., :0, :]
 
     # join tiles and headers into one large video
     # concatenate tiles within each row

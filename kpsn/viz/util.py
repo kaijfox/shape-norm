@@ -218,7 +218,7 @@ def jitter_points(
     return jnp.array(np.random.uniform(-scale, scale, shape)) + arr
 
 
-def stripplot(*arrs, x=None, stacked=False, jitter=0.1):
+def stripplot(*arrs, x=None, stacked=False, jitter=0.1, apply = ()):
     """
     Parameters
     ----------
@@ -242,7 +242,7 @@ def stripplot(*arrs, x=None, stacked=False, jitter=0.1):
         f = np.stack
     else:
         f = np.concatenate
-    return (
+    ret = (
         f(
             [
                 jitter_points(_x, shape=arr.shape, scale=jitter)
@@ -251,6 +251,25 @@ def stripplot(*arrs, x=None, stacked=False, jitter=0.1):
         ),
         f(arrs),
     )
+    if len(apply):
+        applied = tuple([g(arr) for arr in arrs] for g in apply)
+        ret = ret + tuple(
+            tuple(f([np.full(arr.shape, x) for arr in arrs_]), f(arrs_)) 
+            for arrs_ in applied
+        )
+    return ret
+
+def multi_stripplot(arrs, x = None, stacked = False, jitter = 0.1,):
+    """Apply stripplot to multiple arrays with shared x values
+    arrs: iterable[iterable[array]]
+        Lists of arrays to be passed to stripplot. Each iterable of arrays
+        should contain arrays of the same shape in the same order.
+    """
+    strips = [stripplot(*a, x = x, stacked = stacked, jitter = jitter) for a in arrs]
+    xs = strips[0][0]
+    strips = [s[1] for s in strips]
+    return xs, strips
+
 
 
 def flat_grid(total, n_col, ax_size, **subplot_kw):

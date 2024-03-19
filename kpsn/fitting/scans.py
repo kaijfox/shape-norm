@@ -154,11 +154,18 @@ def load_scan_dataset(
     )
 
 
-def _dataset_and_bodies_inv(project, model_name, return_session_inv=False):
+def _dataset_and_bodies_inv(project, model_name = None, return_session_inv=False):
 
-    cfg = load_model_config(project.model_config(model_name))
+    if model_name is None:
+        model_path = Path(project)
+        config_path = model_path / "model.yml"
+    else:
+        model_path = project.model(model_name)
+        config_path = project.model_config(model_name)
+
+    cfg = load_model_config(config_path)
     dataset_orig, _ = load_and_prepare_dataset(cfg, modify=False)
-    dataset = modify_dataset(project.model(model_name), dataset_orig)
+    dataset = modify_dataset(model_path, dataset_orig)
     _inflate = lambda d: inflate(d, cfg["features"])
 
     if cfg["fit"]["type"] != "split":
@@ -479,3 +486,16 @@ def merge_param_hist_with_hyperparams(
         model, long_stat, long_hype, param_hist._tree
     )
     return full_params
+
+
+def select_param_step(
+    model: JointModel, params: JointModelParams, param_hist: ArrayTrace, step: int
+):
+    """Select a single step from a parameter history."""
+    stat, hype, _ = params.by_type()
+    return JointModelParams.from_types(
+        model,
+        stat,
+        hype,
+        pt.tree_map(lambda arr: arr[step], param_hist._tree),
+    )

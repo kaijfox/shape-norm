@@ -59,9 +59,9 @@ def save_project_config(path, config, write_calib=False):
         path = Path(path)
 
     if write_calib:
-        calib = load_calibration_data(config["calibration_file"])
+        calib = load_calibration_data(path.parent / config["calibration_file"])
         calib.update(_extract_calibration_data(config))
-        save_calibration_data(config["calibration_file"], calib)
+        save_calibration_data(path.parent / config["calibration_file"], calib)
 
     without_calib = _map_ordered(config, _drop_calibration_data)
     save_config(path, without_calib)
@@ -91,7 +91,7 @@ def load_project_config(path):
         cfg = _yaml.load(f)
     # load calibration data and insert into config sections
     cfg = _add_calibration_data(
-        cfg, load_calibration_data(cfg["calibration_file"])
+        cfg, load_calibration_data(path.parent / cfg["calibration_file"])
     )
     return cfg
 
@@ -158,11 +158,12 @@ def load_model_config(path):
     # load yaml values, including main project config
     with open(str(path), "r") as f:
         model_cfg = _yaml.load(f)
-    with open(model_cfg["project"], "r") as f:
+    project_path = path.parent / model_cfg["project"]
+    with open(project_path, "r") as f:
         model_cfg.update(_yaml.load(f))
     # load calibration data and insert into config sections
     model_cfg = _add_calibration_data(
-        model_cfg, load_calibration_data(model_cfg["calibration_file"])
+        model_cfg, load_calibration_data(project_path.parent / model_cfg["calibration_file"])
     )
     return model_cfg
 
@@ -189,10 +190,11 @@ def save_model_config(path, config, write_calib=False):
     without_calib = _map_ordered(model_cfg, _drop_calibration_data)
     save_config(path, without_calib)
     # save project-wide calibration data if requested
+    project_path = path.parent / model_cfg["project"]
     if write_calib:
-        calib = load_calibration_data(config["calibration_file"])
+        calib = load_calibration_data(project_path.parent / config["calibration_file"])
         calib.update(_extract_calibration_data(model_cfg))
-        save_calibration_data(config["calibration_file"], calib)
+        save_calibration_data(project_path.parent / config["calibration_file"], calib)
 
 
 def load_calibration_data(path):

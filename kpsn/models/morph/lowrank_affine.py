@@ -124,7 +124,7 @@ class LRAParams(MorphModelParams):
     @property
     def mode_updates(self):
         return self._mode_updates.at[..., self.ref_body, :, :].set(0)
-
+        
     @property
     def offset_updates(self):
         return self._offset_updates.at[..., self.ref_body, :].set(0)
