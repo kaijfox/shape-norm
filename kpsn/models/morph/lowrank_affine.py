@@ -45,7 +45,7 @@ def calibrate_base_model(dataset: FeatureDataset, config, n_dims=None):
     if n_dims is None:
         selected_ix = jnp.argmax(scree > config["calibration"]["tgt_variance"])
     else:
-        selected_ix = n_dims
+        selected_ix = n_dims - 1
 
     # variance of each component in feature space
     mean_vars = jnp.var(
@@ -124,7 +124,7 @@ class LRAParams(MorphModelParams):
     @property
     def mode_updates(self):
         return self._mode_updates.at[..., self.ref_body, :, :].set(0)
-        
+
     @property
     def offset_updates(self):
         return self._offset_updates.at[..., self.ref_body, :].set(0)

@@ -79,21 +79,44 @@ def _check_should_stop_early(loss_hist, step_i, tol, stop_window):
     return False
 
 
-def _mask_gradients_by_path(grads, blacklist, verbose=True):
+def _path_to_name(model, param_path):
+    """
+    Parameters are exposed to jitted functions as a tuple
+        ((pose_param_0, pose_param_0, ...), (morph_param_0, morph_param_1, ...))
+    and so pytree paths for the params look like [IntKey(0), IntKey(1)]. This
+    function converts paths of this form to strings like "pose/pose_param_0".
+    """
+    param_group = ["pose", "morph"][param_path[0].idx]
+    param_name = "..."
+    param_name = getattr(model, param_group).ParamClass._trained[param_path[1].idx]
+    return param_group + "/" + param_name
+
+
+def _mask_gradients_by_path(model, grads, blacklist, verbose=True):
     if verbose:
         pt.tree_map_with_path(
             lambda pth, grad: (
-                logging.info(f"Locking param: {_keystr(pth), grad.shape}")
-                if any(fnmatch(_keystr(pth), p) for p in blacklist)
+                logging.info(
+                    f"Locking param: {_path_to_name(model, pth), grad.shape}"
+                )
+                if any(
+                    fnmatch(_path_to_name(model, pth), p)
+                    for p in blacklist
+                )
                 # else None
-                else logging.info(f"Fitting param: {_keystr(pth), grad.shape}")
+                else logging.info(
+                    f"Fitting param: {_path_to_name(model, pth), grad.shape}"
+                )
             ),
             grads,
         )
     return pt.tree_map_with_path(
         lambda pth, grad: (
             jnp.zeros_like(grad)
-            if any(fnmatch(_keystr(pth), p) for p in blacklist)
+            if any(
+                fnmatch(_path_to_name(model, pth), p)
+                for p in blacklist
+            )
             else grad
         ),
         grads,
@@ -213,7 +236,7 @@ def construct_jitted_mstep(
             )
 
         if update_blacklist is not None:
-            grads = _mask_gradients_by_path(grads, update_blacklist)
+            grads = _mask_gradients_by_path(model, grads, update_blacklist)
 
         updates, opt_state = optimizer.update(grads, opt_state, trained_params)
         trained_params = optax.apply_updates(trained_params, updates)
