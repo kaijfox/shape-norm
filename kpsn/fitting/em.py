@@ -88,7 +88,9 @@ def _path_to_name(model, param_path):
     """
     param_group = ["pose", "morph"][param_path[0].idx]
     param_name = "..."
-    param_name = getattr(model, param_group).ParamClass._trained[param_path[1].idx]
+    param_name = getattr(model, param_group).ParamClass._trained[
+        param_path[1].idx
+    ]
     return param_group + "/" + param_name
 
 
@@ -99,10 +101,7 @@ def _mask_gradients_by_path(model, grads, blacklist, verbose=True):
                 logging.info(
                     f"Locking param: {_path_to_name(model, pth), grad.shape}"
                 )
-                if any(
-                    fnmatch(_path_to_name(model, pth), p)
-                    for p in blacklist
-                )
+                if any(fnmatch(_path_to_name(model, pth), p) for p in blacklist)
                 # else None
                 else logging.info(
                     f"Fitting param: {_path_to_name(model, pth), grad.shape}"
@@ -113,10 +112,7 @@ def _mask_gradients_by_path(model, grads, blacklist, verbose=True):
     return pt.tree_map_with_path(
         lambda pth, grad: (
             jnp.zeros_like(grad)
-            if any(
-                fnmatch(_path_to_name(model, pth), p)
-                for p in blacklist
-            )
+            if any(fnmatch(_path_to_name(model, pth), p) for p in blacklist)
             else grad
         ),
         grads,
@@ -155,8 +151,8 @@ def _mstep_objective(
 
     dataset_prob = (keypt_probs * aux_pdf).sum()
 
-    morph_prior = model.morph.log_prior(params.morph)
-    posespace_prior = model.pose.log_prior(params.pose)
+    morph_prior = model.morph.log_prior(params.morph, observations, poses)
+    posespace_prior = model.pose.log_prior(params.pose, observations, poses)
 
     aux_entropy = -jnp.where(
         aux_pdf > 1e-12, aux_pdf * jnp.log(aux_pdf), 0

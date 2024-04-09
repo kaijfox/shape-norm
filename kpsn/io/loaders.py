@@ -211,9 +211,11 @@ class DatasetLoader(object):
                     )
                 data_arr = data_arr[:, kpt_ixs]
                 if config["invert_axes"] is not None:
-                    data_arr.at[:, :, config["invert_axes"]].set(
+                    data_arr = data_arr.at[:, :, config["invert_axes"]].set(
                         -data_arr[:, :, config["invert_axes"]]
                     )
+
+
             else:
                 data_arr = jnp.empty((0, len(kpt_ixs), 0))
 

@@ -2,7 +2,7 @@ from .styles import colorset
 from ..io.loaders import load_dataset
 from ..io.alignment import align
 from ..io.armature import Armature
-from .util import plot_mouse_views, select_frame_gallery, axes_off, legend
+from .util import plot_mouse_views, select_frame_gallery, axes_off, legend, flat_grid
 
 import matplotlib.pyplot as plt
 
@@ -19,8 +19,8 @@ def session_means(config: dict, colors: colorset = None):
 
     dataset = load_dataset(config["dataset"])
     dataset, align_inverse = align(dataset, config["alignment"])
-    fig, ax = plt.subplots(
-        2, dataset.n_sessions, figsize=(dataset.n_sessions * 2, 3)
+    fig, ax = flat_grid(
+        dataset.n_sessions, min(dataset.n_sessions, 10), ax_size=(1.5, 1.5)
     )
 
     for i, session in enumerate(dataset.sessions):

@@ -202,7 +202,7 @@ class pcs(reducer):
         config = config["features"]
 
         flat_data = dataset.as_features().data
-        if config["max_pts"] is not None:
+        if config["max_pts"] is not None and flat_data.shape[0] > config["max_pts"]:
             subset = jr.choice(
                 jr.PRNGKey(config["subset_seed"]),
                 flat_data.shape[0],

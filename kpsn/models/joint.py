@@ -68,7 +68,7 @@ class PoseModel(NamedTuple):
     aux_distribution: Callable[
         [PoseModelParams, FeatureDataset], Float[Array, "*#K n_discrete"]
     ]
-    log_prior: Callable[[PoseModelParams], Scalar]
+    log_prior: Callable[[PoseModelParams, PytreeDataset, PytreeDataset], Scalar]
     init_hyperparams: Callable[[FeatureDataset, dict], PoseModelParams]
     init: Callable[[PoseModelParams, FeatureDataset, dict], PoseModelParams]
     reports: Callable[[PoseModelParams], dict]
@@ -84,7 +84,7 @@ class MorphModel(NamedTuple):
         [MorphModelParams, PytreeDataset, bool],
         Tuple[PytreeDataset, Float[Array, "*#K"]],
     ]
-    log_prior: Callable[[MorphModelParams], dict]
+    log_prior: Callable[[MorphModelParams, PytreeDataset, PytreeDataset], dict]
     init_hyperparams: Callable[[PytreeDataset, dict], MorphModelParams]
     init: Callable[[MorphModelParams, PytreeDataset, dict], MorphModelParams]
     reports: Callable[[MorphModelParams], dict]
