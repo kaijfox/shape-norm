@@ -41,11 +41,11 @@ class ArrayTrace:
     def n_leaves(self):
         return len(pt.tree_flatten(self._tree)[0])
 
-    def plot(self, axes, label_mode="title", **artist_kws):
+    def plot(self, axes, label_mode="title", first_step = 0, **artist_kws):
         zipped_paths_leafs, _ = pt.tree_flatten_with_path(self._tree)
         for ax, (path, leaf) in zip(axes, zipped_paths_leafs):
             plottable = leaf.reshape([len(leaf), -1])
-            ax.plot(plottable, **artist_kws)
+            ax.plot(range(first_step, len(leaf)), plottable[first_step:], **artist_kws)
             if label_mode == "title":
                 ax.set_title(_keystr(path, plottable))
             elif label_mode == "yaxis":

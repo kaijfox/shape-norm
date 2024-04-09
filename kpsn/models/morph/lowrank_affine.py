@@ -213,6 +213,8 @@ def inverse_transform(
 
 
 def log_prior(params: LRAParams) -> dict:
+
+    
     offset_logp = tfp.distributions.MultivariateNormalDiag(
         scale_diag=params.upd_var_ofs * jnp.ones(params.n_feats)
     ).log_prob(params.offset_updates)
@@ -298,6 +300,8 @@ def mode_components(
 ]:
     """
     Returns:
+        coords:
+            Coordinates of poses along the morph modes.
         components:
             Components of poses along the subspace of each morph mode.
         complement:
