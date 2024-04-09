@@ -434,6 +434,8 @@ def discrete_mle(
 
 def log_prior(
     params: GMMParams,
+    observations: PytreeDataset,
+    poses: PytreeDataset,
 ):
     # Heirarchical dirichlet prior on component weights
     if params.n_components > 1:
@@ -461,10 +463,8 @@ def log_prior(
     return dict(pop_weight=pop_logpdf, subj_weight=subj_logpdf, cov=cov_logpdf)
 
 
-def reports(
-    params: GMMParams,
-):
-    return dict(priors=log_prior(params))
+def reports(params: GMMParams):
+    return dict()
 
 
 model = PoseModel(

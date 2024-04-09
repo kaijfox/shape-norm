@@ -20,6 +20,8 @@ defaults = dict(
     n_dims=None,
     upd_var_modes=None,
     upd_var_ofs=None,
+    dist_var=None,
+    prior_mode="params",
     init=dict(seed=0, offsets=True),
     calibration=dict(tgt_variance=0.9),
 )
@@ -95,9 +97,11 @@ def plot_calibration(config: dict, colors):
 class LRAParams(MorphModelParams):
     # --- static/shape params
     n_dims: int = _getter("n_dims")
+    prior_mode: str = _getter("prior_mode")
     # --- hyperparams
     upd_var_modes: Scalar = _getter("upd_var_modes")
     upd_var_ofs: Scalar = _getter("upd_var_ofs")
+    dist_var: Scalar = _getter("dist_var")
     modes: Float[Array, "n_feats n_dims"] = _getter("modes")
     offset: Float[Array, "n_feats"] = _getter("offset")
     # --- trainable params
@@ -109,12 +113,11 @@ class LRAParams(MorphModelParams):
     )
 
     # --- specify how to split params during jitting & differentiation
-    _static = MorphModelParams._static + [
-        "n_dims",
-    ]
+    _static = MorphModelParams._static + ["n_dims", "prior_mode"]
     _hyper = MorphModelParams._hyper + [
         "upd_var_modes",
         "upd_var_ofs",
+        "dist_var",
         "modes",
         "offset",
     ]
@@ -212,29 +215,35 @@ def inverse_transform(
         return poses
 
 
-def log_prior(params: LRAParams) -> dict:
+def log_prior(
+    params: LRAParams, observations: PytreeDataset, poses: PytreeDataset
+) -> dict:
+    if params.prior_mode == "params":
+        offset_logp = tfp.distributions.MultivariateNormalDiag(
+            scale_diag=params.upd_var_ofs * jnp.ones(params.n_feats)
+        ).log_prob(params.offset_updates)
 
-    
-    offset_logp = tfp.distributions.MultivariateNormalDiag(
-        scale_diag=params.upd_var_ofs * jnp.ones(params.n_feats)
-    ).log_prob(params.offset_updates)
+        flat_updates = params.mode_updates.reshape(
+            [params.n_bodies, params.n_feats * params.n_dims]
+        )
+        mode_logp = tfp.distributions.MultivariateNormalDiag(
+            scale_diag=params.upd_var_modes
+            * jnp.ones(params.n_feats * params.n_dims)
+        ).log_prob(flat_updates)
+        dist_logp = jnp.array(0.0)
+    else:
+        offset_logp = jnp.array(0.0)
+        mode_logp = jnp.array(0.0)
+        induced_dist = ((observations.data - poses.data) ** 2).mean()
+        dist_logp = tfp.distributions.Normal(
+            loc=0.0, scale=params.dist_var
+        ).log_prob(induced_dist)
 
-    flat_updates = params.mode_updates.reshape(
-        [params.n_bodies, params.n_feats * params.n_dims]
-    )
-    mode_logp = tfp.distributions.MultivariateNormalDiag(
-        scale_diag=params.upd_var_modes
-        * jnp.ones(params.n_feats * params.n_dims)
-    ).log_prob(flat_updates)
-
-    return dict(
-        offset=offset_logp,
-        mode=mode_logp,
-    )
+    return dict(offset=offset_logp, mode=mode_logp, induced_dist=dist_logp)
 
 
 def reports(params: LRAParams) -> dict:
-    return dict(priors=log_prior(params))
+    return dict()
 
 
 def init_hyperparams(
@@ -251,6 +260,8 @@ def init_hyperparams(
             ref_body=observations.sess_bodies[observations.ref_session],
             modes=pcs._pcadata.pcs()[: config["n_dims"], :].T,
             offset=pcs._center,
+            prior_mode=config.get("prior_mode", "params"),
+            dist_var=config.get("dist_var", 1.0),
             **get_entries(
                 config,
                 [
