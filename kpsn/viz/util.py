@@ -218,7 +218,7 @@ def jitter_points(
     return jnp.array(np.random.uniform(-scale, scale, shape)) + arr
 
 
-def stripplot(*arrs, x=None, stacked=False, jitter=0.1, apply = ()):
+def stripplot(*arrs, x=None, stacked=False, aslist=False, jitter=0.1, apply = ()):
     """
     Parameters
     ----------
@@ -240,6 +240,8 @@ def stripplot(*arrs, x=None, stacked=False, jitter=0.1, apply = ()):
         x = np.arange(len(arrs))
     if stacked:
         f = np.stack
+    elif aslist:
+        f = list
     else:
         f = np.concatenate
     ret = (
@@ -252,11 +254,12 @@ def stripplot(*arrs, x=None, stacked=False, jitter=0.1, apply = ()):
         f(arrs),
     )
     if len(apply):
-        applied = tuple([g(arr) for arr in arrs] for g in apply)
-        ret = ret + tuple(
-            tuple(f([np.full(arr.shape, x) for arr in arrs_]), f(arrs_)) 
+        applied = tuple([np.atleast_1d(g(arr)) for arr in arrs] for g in apply)
+        add_ret = tuple(
+            (f([np.full(arr.shape, _x) for _x, arr in zip(x, arrs_)]), f(arrs_)) 
             for arrs_ in applied
         )
+        ret = ret + add_ret
     return ret
 
 def multi_stripplot(arrs, x = None, stacked = False, jitter = 0.1,):

@@ -284,7 +284,6 @@ class Dataset(object):
     )
 
 
-
 class KeypointDataset(Dataset):
     """Collection of keypoint data."""
 
@@ -369,6 +368,51 @@ class KeypointDataset(Dataset):
             _body_names,
             _session_names,
         )
+
+    @staticmethod
+    def from_pytree(
+        dataset: "PytreeDataset",
+        body_names: dict,
+        session_names: dict,
+        keypoint_names: list,
+    ):
+        """Convert a PytreeDataset to a FeatureDataset.
+
+        Parameters
+        ----------
+        dataset : PytreeDataset
+        body_names, session_names : dict
+            Mapping from integer body/session ids to string body/session names.
+        """
+
+        sess_bodies = {
+            session_names[i]: body_names[int(dataset.sess_bodies[i])]
+            for i in range(dataset.n_sessions)
+            if dataset.slices[i] is not None
+        }
+        new_dataset = KeypointDataset(
+            dataset.data,
+            {
+                session_names[i]: dataset.slices[i]
+                for i in range(dataset.n_sessions)
+                if dataset.slices[i] is not None
+            },
+            sess_bodies,
+            session_names[dataset.ref_session],
+            keypoint_names,
+            compute_ids=False,
+            _body_names=body_names,
+            _session_names=session_names,
+        )
+        new_dataset._bodies_inv = {
+            body_names[b]: tuple(
+                session_names[int(s)] for s in dataset._bodies_inv[b]
+            )
+            for b in range(dataset.n_bodies)
+        }
+        new_dataset.session_ids = dataset.session_ids
+        new_dataset.body_ids = dataset.body_ids
+        return new_dataset
 
     n_points = property(lambda self: self.data.shape[-2])
     n_dims = property(lambda self: self.data.shape[-1])

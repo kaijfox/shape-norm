@@ -68,9 +68,7 @@ def _get_root_path(paths: dict):
             {k: str(Path(*fp[len(root) - 1 :])) for k, fp in paths.items()},
         )
     else:
-        return "", {
-            k: str(Path(*fp)) for k, fp in paths.items()
-        }
+        return "", {k: str(Path(*fp)) for k, fp in paths.items()}
 
 
 def _session_file_config(
@@ -467,6 +465,12 @@ def construct_nondataset_project_config(
     )
 
     struct["dataset"] = dataset_config
+
+    if alignment_type not in alignment_types:
+        raise ValueError(f"Unknown alignment type: {alignment_type}")
+    if feature_type not in feature_types:
+        raise ValueError(f"Unknown feature type: {feature_type}")
+
     struct["alignment"]["type"] = alignment_type
     struct["alignment"].update(alignment_types[alignment_type].defaults)
     struct["features"]["type"] = feature_type

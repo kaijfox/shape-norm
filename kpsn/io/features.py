@@ -2,6 +2,7 @@ from ..io.dataset import KeypointDataset, FeatureDataset, Dataset
 from ..project.paths import Project
 from ..config import load_calibration_data, save_calibration_data
 from ..pca import fit_with_center, CenteredPCA
+from ..io import armature
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -148,6 +149,47 @@ class locked_pts(reducer):
         ), "Feature reduction not calibrated."
 
 
+class no_reduction(reducer):
+    type_name = "no_reduction"
+    defaults = dict()
+
+    @staticmethod
+    def reduce_array(arr, config):
+        """Reduce an array of keypoints to an array of features by removing
+        dimensions marked in config"""
+        flat_data = arr.reshape((arr.shape[0], -1))
+        return flat_data
+
+    @staticmethod
+    def inflate_array(arr, config):
+        """Reconstruct an array of keypoints from an array of features by
+        inserting dimensions."""
+        calib = config["calibration_data"]
+        inflated_shape = (arr.shape[0], calib["n_kpts"], -1)
+        # if passed a single frame
+        if arr.ndim < 2:
+            arr = arr[None]
+            inflated_shape = (calib["n_kpts"], -1)
+        # return, reshaped to number of keypoints
+        return arr.reshape(inflated_shape)
+
+    @staticmethod
+    def _calibrate(dataset: KeypointDataset, config: dict):
+        """Calibrate feature extraction for a dataset."""
+        return dict(
+            n_kpts=dataset.n_points,
+        )
+
+    @staticmethod
+    def plot_calibration(project: Project, config: dict, colors=None):
+        """Plot calibration data."""
+        return None
+
+    @staticmethod
+    def _validate_config(config):
+        return True
+
+
 class pcs(reducer):
     """Feature reduction based on principal components of a full dataset."""
 
@@ -202,7 +244,10 @@ class pcs(reducer):
         config = config["features"]
 
         flat_data = dataset.as_features().data
-        if config["max_pts"] is not None:
+        if (
+            config["max_pts"] is not None
+            and flat_data.shape[0] > config["max_pts"]
+        ):
             subset = jr.choice(
                 jr.PRNGKey(config["subset_seed"]),
                 flat_data.shape[0],
@@ -295,9 +340,101 @@ class pcs(reducer):
             raise ValueError("n_kpts must be set for PCA features.")
 
 
+class bones(reducer):
+    """Feature reduction based on parent-child keypoint relationships.
+
+    Given a spatial dimensionality $N$ and $M$ 'bones' (parent-child
+    keypoint pairs), this feature reduction method computes the lengths of each
+    bone and the location of the root keypoint. The resulting feature vector is
+    structured
+    ```
+    [root_pos in R^N | bone_lengths in R^M | bone_1_normed_pos in R^(N) | ...]
+    ```
+    """
+
+    type_name = "bones"
+    defaults = dict()
+
+    @staticmethod
+    def reduce_array(arr, config):
+        """Reduce an array of keypoints to an array of features."""
+        calib = config["calibration_data"]
+        roots, bones = armature.bone_transform(arr, calib["transform"])
+        base_length = calib["base_lengths"][None]
+        bls = jnp.linalg.norm(bones, axis=-1)
+        bones = bones / bls[..., None]
+        bls = bls / base_length
+        bones = bones.reshape(bones.shape[:-2] + (-1,))
+        # bones = jnp.concatenate(
+        #     [bones[..., i, :] for i in range(bones.shape[-2])], axis=-1
+        # )
+        return jnp.concatenate([roots, bls, bones], axis=-1)
+
+    @staticmethod
+    def inflate_array(arr, config):
+        """Reconstruct an array of keypoints from an array of features."""
+        calib = config["calibration_data"]
+        (N, M) = calib["n_spatial"], calib["n_bones"]
+        roots = arr[..., :N]
+        base_length = calib["base_lengths"][(None,) * (arr.ndim - 1)]
+        bls = arr[..., N : N + M] * base_length
+        bones = arr[..., N + M :].reshape(arr.shape[:-1] + (M, N))
+        bones = bls[..., None] * bones
+        keypts = armature.inverse_bone_transform(
+            roots, bones, calib["transform"]
+        )
+        return keypts
+
+    @classmethod
+    def calibrate(cls, dataset: KeypointDataset, config, n_dims=None):
+        """Calibrate feature extraction for a dataset.
+
+        Parameters
+        ----------
+        dataset : KeypointDataset
+        config : dict
+            Full config
+        n_dims : int
+            Number of dimensions to select, or None to choose a number of
+            dimensions explaining `tgt_variance` of the variance as specified in
+            the config.
+        """
+        return super().calibrate(dataset, config, n_dims=n_dims)
+
+    @staticmethod
+    def _calibrate(dataset: KeypointDataset, config: dict, n_dims=None):
+        """Calibrate feature extraction for a dataset."""
+
+        arms = armature.Armature.from_config(config["dataset"])
+        transform = armature.construct_bones_transform(
+            arms.bones, arms.keypt_by_name[arms.root]
+        )
+        roots, bones = armature.bone_transform(dataset.data, transform)
+        base_length = jnp.linalg.norm(bones, axis=-1).mean(axis=0)
+
+        # outputs to main config and calibration_data
+        return dict(
+            transform=transform,
+            base_lengths=base_length,
+            n_spatial=dataset.data.shape[-1],
+            n_bones=len(arms.bones),
+        )
+
+    @staticmethod
+    def plot_calibration(config: dict, colors=None):
+        """Plot calibration data."""
+        return None
+
+    @staticmethod
+    def _validate_config(config):
+        return True
+
+
 feature_types = {
     locked_pts.type_name: locked_pts,
     pcs.type_name: pcs,
+    no_reduction.type_name: no_reduction,
+    bones.type_name: bones,
 }
 default_feature_type = "locked_pts"
 

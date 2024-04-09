@@ -19,6 +19,7 @@ from .videos import (
 )
 from ..io.utils import stack_dict
 from ..models.morph.lowrank_affine import LRAParams, model as lra_model
+from ..models.morph.bone_length import BLSParams, model as bls_model
 from .styles import colorset
 from ..io.loaders import load_dataset
 from ..fitting.methods import load_and_prepare_dataset, load_fit
@@ -40,13 +41,13 @@ import seaborn as sns
 import cv2
 
 
-def report_plots(checkpoint, n_col=5, colors: colorset = None):
+def report_plots(checkpoint, n_col=5, first_step = 0, colors: colorset = None):
     if colors is None:
         colors = colorset.active
     reports: ArrayTrace = checkpoint["meta"]["reports"]
     n_row = int(jnp.ceil(reports.n_leaves() / n_col))
     fig, ax = plt.subplots(n_row, n_col, figsize=(3 * n_col, 2 * n_row))
-    reports.plot(ax.ravel()[: reports.n_leaves()], color=colors.neutral, lw=1)
+    reports.plot(ax.ravel()[: reports.n_leaves()], color=colors.neutral, lw=1, first_step=first_step)
     for a in ax.ravel()[reports.n_leaves() :]:
         a.set_axis_off()
     sns.despine()
@@ -195,7 +196,7 @@ def lra_centroid_and_modes(
 
 
 def lra_param_convergence(
-    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False
+    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False, first_step=0,
 ):
     if colors is None:
         colors = colorset.active
@@ -211,9 +212,14 @@ def lra_param_convergence(
     # so we would prefer it be a scalar
     param_hist.morph._tree["ref_body"] = param_hist.morph.ref_body[0]
 
-    step = jnp.concatenate([jnp.array([0]), checkpoint["meta"].get(
-        "gd_step", np.arange(1, len(param_hist.morph.offset_updates))
-    )])[::stepsize]
+    step = jnp.concatenate(
+        [
+            jnp.array([0]),
+            checkpoint["meta"].get(
+                "gd_step", np.arange(1, len(param_hist.morph.offset_updates))
+            ),
+        ]
+    )[first_step::stepsize]
     n_bodies = int(param_hist.morph.n_bodies[0])
     n_dims = int(param_hist.morph.n_dims[0])
     pal = colors.make("Spectral")(n_bodies)
@@ -233,7 +239,7 @@ def lra_param_convergence(
             upds = param_hist.morph.mode_updates[:, i_body, :, i_mode]
             ax[i_mode, i_ax].plot(
                 step,
-                upds[::stepsize],
+                upds[first_step::stepsize],
                 color=pal[i_body],
                 lw=0.5,
                 label=[i_body] + [None] * (upds.shape[-1] - 1),
@@ -241,9 +247,7 @@ def lra_param_convergence(
             ax[0, i_ax].set_title(_dataset._body_names[i_body])
             ax[i_mode, 0].set_ylabel(f"pc {i_mode}")
         upds = param_hist.morph.offset_updates[:, i_body, :]
-        ax[-1, i_ax].plot(
-            step, upds[::stepsize], color=pal[i_body], lw=0.5
-        )
+        ax[-1, i_ax].plot(step, upds[first_step::stepsize], color=pal[i_body], lw=0.5)
         i_ax += 1
 
     ax[-1, 0].set_xlabel("iteration [m-steps]")
@@ -251,8 +255,68 @@ def lra_param_convergence(
     return fig
 
 
+def bls_param_convergence(
+    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False, first_step=0,
+):
+    if colors is None:
+        colors = colorset.active
+
+    cfg = _insert_calibration_data_to_checkpoint_config(checkpoint)
+    _dataset, _ = load_and_prepare_dataset(cfg)
+    model = get_model(cfg)
+    param_hist: BLSParams = merge_param_hist_with_hyperparams(
+        model, checkpoint["params"], checkpoint["meta"]["param_hist"]
+    )
+    arms = Armature.from_config(cfg["dataset"])
+
+    # hacky: param_hist.ref_body becomes an array, but will be used in .at[].set
+    # so we would prefer it be a scalar
+    param_hist.morph._tree["ref_body"] = param_hist.morph.ref_body[0]
+
+    step = jnp.concatenate(
+        [
+            jnp.array([0]),
+            checkpoint["meta"].get(
+                "gd_step", np.arange(1, len(param_hist.morph._logscales))
+            ),
+        ]
+    )[first_step::stepsize]
+    n_bodies = int(param_hist.morph.n_bodies[0])
+    n_bones = int(param_hist.morph.n_bones[0])
+    pal = colors.make("Spectral")(n_bodies)
+    fig, ax = plt.subplots(
+        n_bones,
+        n_bodies - 1,
+        figsize=(n_bodies * 1.5, n_bones * 0.75),
+        sharex=True,
+        sharey="row",
+    )
+    ax = np.atleast_2d(ax.T).T
+    i_ax = 0
+    for i_body in _optional_pbar(range(n_bodies), progress):
+        if i_body == param_hist.morph.ref_body:
+            continue
+        for i_bone in range(n_bones):
+            scales = param_hist.morph.scales[:, i_body, i_bone]
+            ax[i_bone, i_ax].plot(
+                step,
+                scales[first_step::stepsize],
+                color=pal[i_body],
+                lw=0.5,
+                label=i_body,
+            )
+            ax[0, i_ax].set_title(_dataset._body_names[i_body])
+            ax[i_bone, 0].set_ylabel(
+                arms.keypoint_names[int(arms.bones[i_bone, 0])]
+            )
+        i_ax += 1
+
+    ax[-1, 0].set_xlabel("iteration [m-steps]")
+    return fig
+
+
 def gmm_param_convergence(
-    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False
+    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False, first_step=0,
 ):
     if colors is None:
         colors = colorset.active
@@ -264,9 +328,14 @@ def gmm_param_convergence(
     )
     n_sessions = int(param_hist.pose.n_sessions[0])
     n_components = int(param_hist.pose.n_components[0])
-    step = jnp.concatenate([jnp.array([0]), checkpoint["meta"].get(
-        "gd_step", np.arange(1, len(param_hist.morph.offset_updates))
-    )])[::stepsize]
+    step = jnp.concatenate(
+        [
+            jnp.array([0]),
+            checkpoint["meta"].get(
+                "gd_step", np.arange(1, len(param_hist.pose.subj_weights))
+            ),
+        ]
+    )[first_step::stepsize]
     pal = colors.make("Spectral")(n_sessions)
     fig, ax = plt.subplots(
         n_components,
@@ -278,12 +347,12 @@ def gmm_param_convergence(
         means = param_hist.pose.means[..., i_comp, :]
         for i_sess in range(n_sessions):
             ax[i_comp, i_sess].plot(
-                step, weights[::stepsize, i_sess], color=pal[i_sess]
+                step, weights[first_step::stepsize, i_sess], color=pal[i_sess]
             )
             ax[i_comp, i_sess].set_ylim(0, param_hist.pose.subj_weights.max())
             ax[0, i_sess].set_title(_dataset._session_names[i_sess])
         ax[i_comp, -1].plot(
-            step, means[::stepsize], color=colors.neutral, lw=0.5
+            step, means[first_step::stepsize], color=colors.neutral, lw=0.5
         )
         ax[i_comp, 0].set_ylabel(f"comp {i_comp}")
     ax[0, -1].set_title("Mean")

@@ -154,7 +154,9 @@ def load_scan_dataset(
     )
 
 
-def _dataset_and_bodies_inv(project, model_name = None, return_session_inv=False):
+def _dataset_and_bodies_inv(
+    project, model_name=None, return_session_inv=False, allow_subsample=True
+):
 
     if model_name is None:
         model_path = Path(project)
@@ -164,7 +166,9 @@ def _dataset_and_bodies_inv(project, model_name = None, return_session_inv=False
         config_path = project.model_config(model_name)
 
     cfg = load_model_config(config_path)
-    dataset_orig, _ = load_and_prepare_dataset(cfg, modify=False)
+    dataset_orig, _ = load_and_prepare_dataset(
+        cfg, modify=False, allow_subsample=allow_subsample
+    )
     dataset = modify_dataset(model_path, dataset_orig)
     _inflate = lambda d: inflate(d, cfg["features"])
 
@@ -403,6 +407,7 @@ def model_jsds_to_reference(
     _body_inv=None,
     ref_cloud=None,
     progress=False,
+    average=True,
 ):
     cfg = load_model_config(project.model_config(model_name))
     if dataset is None:
@@ -489,7 +494,10 @@ def merge_param_hist_with_hyperparams(
 
 
 def select_param_step(
-    model: JointModel, params: JointModelParams, param_hist: ArrayTrace, step: int
+    model: JointModel,
+    params: JointModelParams,
+    param_hist: ArrayTrace,
+    step: int,
 ):
     """Select a single step from a parameter history."""
     stat, hype, _ = params.by_type()

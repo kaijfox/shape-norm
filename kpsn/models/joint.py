@@ -52,7 +52,10 @@ class MorphModelParams(ModelParams):
     n_feats: int = _getter("n_feats")
     ref_body: int = _getter("ref_body")
 
-    _static = ["n_bodies", "n_feats"]
+    _static = [
+        "n_bodies",
+        "n_feats",
+    ]
     _hyper = ["ref_body"]
     _trained = []
 
@@ -62,15 +65,15 @@ class PoseModel(NamedTuple):
     defaults: dict
     ParamClass: type
     discrete_mle: Callable[
-        [PoseModelParams, FeatureDataset], Integer[Array, "*#K"]
+        [PoseModelParams, PytreeDataset], Integer[Array, "*#K"]
     ]
-    pose_logprob: Callable[[PoseModelParams], Float[Array, "*#K n_discrete"]]
+    pose_logprob: Callable[[PoseModelParams, PytreeDataset], Float[Array, "*#K n_discrete"]]
     aux_distribution: Callable[
-        [PoseModelParams, FeatureDataset], Float[Array, "*#K n_discrete"]
+        [PoseModelParams, PytreeDataset], Float[Array, "*#K n_discrete"]
     ]
     log_prior: Callable[[PoseModelParams], Scalar]
-    init_hyperparams: Callable[[FeatureDataset, dict], PoseModelParams]
-    init: Callable[[PoseModelParams, FeatureDataset, dict], PoseModelParams]
+    init_hyperparams: Callable[[PytreeDataset, dict], PoseModelParams]
+    init: Callable[[PoseModelParams, PytreeDataset, dict], PoseModelParams]
     reports: Callable[[PoseModelParams], dict]
     plot_calibration: Callable[[Project, dict], Any]
 

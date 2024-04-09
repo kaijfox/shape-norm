@@ -126,7 +126,7 @@ class PointCloudDensity:
         return self._internal_dist
 
 
-def ball_cloud_js(cloud_a, cloud_b):
+def ball_cloud_js(cloud_a, cloud_b, average=True):
     a = cloud_a
     b = cloud_b
 
@@ -152,11 +152,18 @@ def ball_cloud_js(cloud_a, cloud_b):
     pdf_a_at_b = count_a_at_b / b._n / ball_volume(b_dists, b._d)
 
     # KL divergences to the mixture
+    # KL(p||m) = E_p[log(p/m)] = E_p[log(p)] - E_p[log(m)]
+    summ_fn = (lambda x: x.mean()) if average else lambda x: x
     kl_a_to_mix = (
-        np.log(pdf_a).mean() - np.log(0.5 * (pdf_b + pdf_a_at_b)).mean()
+        # summ_fn(np.log(pdf_a)) - summ_fn(np.log(0.5 * (pdf_b + pdf_a_at_b)))
+        summ_fn(np.log(pdf_a)) - summ_fn(np.log(0.5 * (pdf_a + pdf_b_at_a)))
     )
     kl_b_to_mix = (
-        np.log(pdf_b).mean() - np.log(0.5 * (pdf_a + pdf_b_at_a)).mean()
+        # summ_fn(np.log(pdf_b)) - summ_fn(np.log(0.5 * (pdf_a + pdf_b_at_a)))
+        summ_fn(np.log(pdf_b)) - summ_fn(np.log(0.5 * (pdf_b + pdf_a_at_b)))
     )
 
-    return 0.5 * (kl_a_to_mix + kl_b_to_mix) / jnp.log(2)
+    if average:
+        return 0.5 * (kl_a_to_mix + kl_b_to_mix) / jnp.log(2)
+    else:
+        return kl_a_to_mix, kl_b_to_mix
