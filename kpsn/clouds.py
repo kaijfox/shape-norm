@@ -154,13 +154,11 @@ def ball_cloud_js(cloud_a, cloud_b, average=True):
     # KL divergences to the mixture
     # KL(p||m) = E_p[log(p/m)] = E_p[log(p)] - E_p[log(m)]
     summ_fn = (lambda x: x.mean()) if average else lambda x: x
-    kl_a_to_mix = (
-        # summ_fn(np.log(pdf_a)) - summ_fn(np.log(0.5 * (pdf_b + pdf_a_at_b)))
-        summ_fn(np.log(pdf_a)) - summ_fn(np.log(0.5 * (pdf_a + pdf_b_at_a)))
+    kl_a_to_mix = summ_fn(np.log(pdf_a)) - summ_fn(
+        np.log(0.5 * (pdf_a + pdf_b_at_a))
     )
-    kl_b_to_mix = (
-        # summ_fn(np.log(pdf_b)) - summ_fn(np.log(0.5 * (pdf_a + pdf_b_at_a)))
-        summ_fn(np.log(pdf_b)) - summ_fn(np.log(0.5 * (pdf_b + pdf_a_at_b)))
+    kl_b_to_mix = summ_fn(np.log(pdf_b)) - summ_fn(
+        np.log(0.5 * (pdf_b + pdf_a_at_b))
     )
 
     if average:

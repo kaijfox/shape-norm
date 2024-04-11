@@ -213,11 +213,20 @@ class DatasetLoader(object):
                         -data_arr[:, :, config["invert_axes"]]
                     )
 
-
             else:
                 data_arr = jnp.empty((0, len(kpt_ixs), 0))
 
-            if config["subsample"] is not None and allow_subsample:
+            if config.get("subsample_to", None) is not None and allow_subsample:
+                N = data_arr.shape[0]
+                tgt = config["subsample_to"]
+                if N > tgt:
+                    data_arr = data_arr[: tgt * (N // tgt) : N // tgt]
+                else:
+                    logging.warn(
+                        f"Session {sess} has fewer frames than `subsample_to`"
+                        f" (={tgt}). Subsampling disabled for this session."
+                    )
+            elif config["subsample"] is not None and allow_subsample:
                 data_arr = data_arr[:: config["subsample"]]
             data[sess] = data_arr
 
@@ -257,6 +266,9 @@ class DatasetLoader(object):
         assert (
             "subsample" in config
         ), "No subsample rate specified. Use `null` to disable frame subsampling."
+        assert (config["subsample"] is None) or (
+            config.get("subsample_to", None) is None
+        ), "One of subsample or subsample_to must be null."
 
 
 class raw_npy(DatasetLoader):
@@ -284,6 +296,7 @@ class raw_npy(DatasetLoader):
         posterior=None,
         invert_axes=None,
         subsample=None,
+        subsample_to=None,
         alignment_type=None,
         feature_type=None,
     ):
@@ -314,6 +327,10 @@ class raw_npy(DatasetLoader):
             bodies to specific sessions.
         subsample : int, default None
             Reduce frame rate by taking every `subsample`th frame.
+        subsample_to : int, default None
+            Reduce frame rate by taking every `n`th frame where `n` is chosen
+            for each session such that the total number of frames in each loaded
+            session is `subsample_to`.
         alignment_type : str, default None
             Alignment method to use. If None, will use 'sagittal'.
         feature_type : str, default None
@@ -324,6 +341,7 @@ class raw_npy(DatasetLoader):
         dataset_detail = dict(
             type="raw_npy",
             subsample=subsample,
+            subsample_to=subsample_to,
             **_session_file_config(
                 filepaths,
                 keypoint_names,
@@ -386,6 +404,7 @@ class h5(DatasetLoader):
         keypoint_parents=None,
         bodies=None,
         subsample=None,
+        subsample_to=None,
         alignment_type=None,
         anterior=None,
         posterior=None,
@@ -396,6 +415,7 @@ class h5(DatasetLoader):
         dataset_detail = dict(
             type="h5",
             subsample=subsample,
+            subsample_to=subsample_to,
             h5_key=h5_key,
             **_session_file_config(
                 filepaths,

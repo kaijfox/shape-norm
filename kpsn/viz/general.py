@@ -19,7 +19,7 @@ def session_means(config: dict, colors: colorset = None):
 
     dataset = load_dataset(config["dataset"])
     dataset, align_inverse = align(dataset, config["alignment"])
-    fig, ax = flat_grid(
+    fig, ax, ax_grid = flat_grid(
         dataset.n_sessions, min(dataset.n_sessions, 10), ax_size=(1.5, 1.5)
     )
 
