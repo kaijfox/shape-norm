@@ -17,23 +17,23 @@ def apply_bodies(
     morph_model: MorphModel,
     params: MorphModelParams,
     observations: FeatureDataset,
-    target_bodies: dict,
+    target_bodies: dict[Union[str, int], Union[str, int]],
 ):
     """Transform each session in a dataset to a target body."""
     # transform to integer-indexed sessions required by model functions
-    pt_obs = PytreeDataset.from_pythonic(observations)
-    target_bod_arr = np.zeros(max(observations._session_names.keys()) + 1, int)
-    for sess_id, sess_name in observations._session_names.items():
-        # session in `observations` and in `target_bodies`
-        if sess_name in target_bodies:
-            tgt_bod = target_bodies[sess_name]
-        # no target set, retain the same body
-        else:
-            tgt_bod = observations.sess_bodies[sess_name]
-        target_bod_arr[sess_id] = observations._body_names.inverse[tgt_bod]
-    target_bod_arr = jnp.array(target_bod_arr)
+    # pt_obs = PytreeDataset.from_pythonic(observations)
+    # target_bod_arr = np.zeros(max(observations._session_names.keys()) + 1, int)
+    # for sess_id, sess_name in observations._session_names.items():
+    #     # session in `observations` and in `target_bodies`
+    #     if sess_name in target_bodies:
+    #         tgt_bod = target_bodies[sess_name]
+    #     # no target set, retain the same body
+    #     else:
+    #         tgt_bod = observations.sess_bodies[sess_name]
+    #     target_bod_arr[sess_id] = observations._body_names.inverse[tgt_bod]
+    # target_bod_arr = jnp.array(target_bod_arr)
 
-    mapped = morph_model.apply_bodies(params, pt_obs, target_bod_arr)
+    mapped = morph_model.apply_bodies(params, observations, target_bodies)
     return FeatureDataset.from_pytree(
         mapped, observations._body_names, observations._session_names
     )

@@ -67,7 +67,9 @@ class PoseModel(NamedTuple):
     discrete_mle: Callable[
         [PoseModelParams, PytreeDataset], Integer[Array, "*#K"]
     ]
-    pose_logprob: Callable[[PoseModelParams, PytreeDataset], Float[Array, "*#K n_discrete"]]
+    pose_logprob: Callable[
+        [PoseModelParams, PytreeDataset], Float[Array, "*#K n_discrete"]
+    ]
     aux_distribution: Callable[
         [PoseModelParams, PytreeDataset], Float[Array, "*#K n_discrete"]
     ]
@@ -143,17 +145,16 @@ def initialize_joint_model(
     -------
     params : JointParams
     """
-    pt_obs = PytreeDataset.from_pythonic(observations)
 
     logging.info("Initializing morph model")
-    morph_params = model.morph.init_hyperparams(pt_obs, config["morph"])
-    morph_params = model.morph.init(morph_params, pt_obs, config["morph"])
+    morph_params = model.morph.init_hyperparams(observations, config["morph"])
+    morph_params = model.morph.init(morph_params, observations, config["morph"])
 
     poses = model.morph.inverse_transform(
-        morph_params, pt_obs, return_determinants=False
+        morph_params, observations, return_determinants=False
     )
     logging.info("Initializing pose model")
-    pose_params = model.pose.init_hyperparams(pt_obs, config["pose"])
+    pose_params = model.pose.init_hyperparams(observations, config["pose"])
     pose_params = model.pose.init(pose_params, poses, config["pose"])
 
     return JointModelParams(pose=pose_params, morph=morph_params)

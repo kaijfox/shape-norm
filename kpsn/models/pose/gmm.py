@@ -1,5 +1,5 @@
 from ..joint import PoseModelParams, PoseModel, _getter
-from ...io.dataset import PytreeDataset, FeatureDataset
+from ...io.dataset_refactor import Dataset
 from ...config import get_entries, load_calibration_data, save_calibration_data
 from ...util import (
     extract_tril_cholesky,
@@ -40,9 +40,7 @@ defaults = dict(
 )
 
 
-def calibrate_base_model(
-    dataset: FeatureDataset, config: dict, n_components=None
-):
+def calibrate_base_model(dataset: Dataset, config: dict, n_components=None):
     """
     Calibrate a pose model on a dataset.
 
@@ -101,14 +99,14 @@ def calibrate_base_model(
     # update configs
     config["n_components"] = int(ns[selected_ix])
     config["wish_var"] = float(jnp.var(init_pts, axis=0).mean() / selected_n)
-    config["wish_dof"] = float(20.0 + dataset.n_feats)
+    config["wish_dof"] = float(20.0 + dataset.data.shape[-1])
 
     return full_config
 
 
 def _fit_gmm(
-    dataset,
-    n_components,
+    dataset: Dataset,
+    n_components: int,
     subsample,
     seed,
     large_dataset_ok=False,
@@ -271,7 +269,7 @@ ParamClass = GMMParams
 
 def aux_distribution(
     params: GMMParams,
-    poses: PytreeDataset,
+    poses: Dataset,
 ) -> Tuple[Float[Array, "*#K L"]]:
     """
     Calculate the auxiliary distribution for EM.
@@ -292,25 +290,23 @@ def aux_distribution(
     return jnn.softmax(pose_logits, axis=-1)
 
 
-def pose_logprob(
-    params: GMMParams, poses: PytreeDataset
-) -> Float[Array, "*#K L"]:
+def pose_logprob(params: GMMParams, poses: Dataset) -> Float[Array, "*#K L"]:
     norm_probs = tfp.distributions.MultivariateNormalFullCovariance(
         loc=params.means,
         covariance_matrix=params.covariances,
     ).log_prob(poses.data[..., None, :])
 
-    component_logprobs = jnp.log(params.subj_weights)[poses.session_ids]
+    component_logprobs = jnp.log(params.subj_weights)[poses.stack_session_ids]
 
     return norm_probs + component_logprobs
 
 
-def init_hyperparams(poses: PytreeDataset, config: dict) -> GMMParams:
+def init_hyperparams(poses: Dataset, config: dict) -> GMMParams:
     wish_var, wish_dof = config["wish_var"], config["wish_dof"]
     return GMMParams(
         dict(
             n_sessions=poses.n_sessions,
-            n_feats=poses.n_feats,
+            n_feats=poses.data.shape[-1],
             ref_session=poses.ref_session,
             wish_var=float(wish_var),
             wish_dof=float(wish_dof),
@@ -330,7 +326,7 @@ def init_hyperparams(poses: PytreeDataset, config: dict) -> GMMParams:
 
 def init(
     hyperparams: GMMParams,
-    dataset: PytreeDataset,
+    dataset: Dataset,
     config: dict,
 ) -> GMMParams:
     """
@@ -378,8 +374,9 @@ def init(
             lookup_subj = dataset.ref_session
         else:
             lookup_subj = i_subj
+        slc = dataset.get_slice(lookup_subj)
         uniq, count = jnp.unique(
-            init_components[dataset.get_slice(lookup_subj)], return_counts=True
+            init_components[slc[0] : slc[1]], return_counts=True
         )
         init_counts[i_subj][uniq] = count
     init_counts[init_counts == 0] = init_cfg["count_eps"]
@@ -419,7 +416,7 @@ def init(
 
 def discrete_mle(
     estimated_params: GMMParams,
-    poses: PytreeDataset,
+    poses: Dataset,
 ) -> Integer[Array, "*#K"]:
     """
     Estimate pose model discrete latents given poses.
@@ -434,8 +431,8 @@ def discrete_mle(
 
 def log_prior(
     params: GMMParams,
-    observations: PytreeDataset,
-    poses: PytreeDataset,
+    observations: Dataset,
+    poses: Dataset,
 ):
     # Heirarchical dirichlet prior on component weights
     if params.n_components > 1:

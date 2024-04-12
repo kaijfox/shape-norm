@@ -1,5 +1,5 @@
 from ..joint import MorphModelParams, MorphModel, _getter
-from ...io.dataset import PytreeDataset, FeatureDataset
+from ...io.dataset_refactor import Dataset
 from ...config import get_entries, load_calibration_data, save_calibration_data
 from ...util import (
     broadcast_batch,
@@ -7,7 +7,7 @@ from ...util import (
 from ...pca import fit_with_center
 from ...project.paths import Project
 
-from typing import Tuple
+from typing import Tuple, Union
 from jaxtyping import Array, Float, Scalar, Integer
 import tensorflow_probability.substrates.jax as tfp
 import jax.numpy as jnp
@@ -27,7 +27,7 @@ defaults = dict(
 )
 
 
-def calibrate_base_model(dataset: FeatureDataset, config, n_dims=None):
+def calibrate_base_model(dataset: Dataset, config, n_dims=None):
     """
     Calibrate a morph model from a dataset.
 
@@ -150,9 +150,7 @@ def get_transform(
     return linear_parts, pop_offset, sess_offsets
 
 
-def transform(
-    params: LRAParams, poses: PytreeDataset
-) -> Float[Array, "*#K n_feats"]:
+def transform(params: LRAParams, poses: Dataset) -> Float[Array, "*#K n_feats"]:
     """
     Calculate the linear transform defining the morph model
     using a given set of parameters.
@@ -173,9 +171,11 @@ def transform(
 
     # broadcast transform arrays
     batch_shape = poses.data.shape[:-1]
-    linear_parts = linear_parts[poses.body_ids]  # (batch, n_feats, n_feats)
+    linear_parts = linear_parts[
+        poses.stack_body_ids
+    ]  # (batch, n_feats, n_feats)
     pop_offset = broadcast_batch(pop_offset, batch_shape)  # (batch, n_feats)
-    sess_offsets = sess_offsets[poses.body_ids]  # (batch, n_feats)
+    sess_offsets = sess_offsets[poses.stack_body_ids]  # (batch, n_feats)
 
     # apply transform
     centered = (poses.data - pop_offset)[..., None]  # (batch, n_feats, 1)
@@ -187,17 +187,19 @@ def transform(
 
 def inverse_transform(
     params: LRAParams,
-    observations: PytreeDataset,
+    observations: Dataset,
     return_determinants: bool = False,
-) -> Tuple[PytreeDataset, Float[Array, "*#K"]]:
+) -> Tuple[Dataset, Float[Array, "*#K"]]:
     linear_parts, pop_offset, sess_offsets = get_transform(params)
     linear_invs = jla.inv(linear_parts)
 
     # broadcast transform arrays
     batch_shape = observations.data.shape[:-1]
-    linear_inv = linear_invs[observations.body_ids]  # (batch, n_feats, n_feats)
+    linear_inv = linear_invs[
+        observations.stack_body_ids
+    ]  # (batch, n_feats, n_feats)
     pop_offset = broadcast_batch(pop_offset, batch_shape)  # (batch, n_feats)
-    sess_offsets = sess_offsets[observations.body_ids]  # (batch, n_feats)
+    sess_offsets = sess_offsets[observations.stack_body_ids]  # (batch, n_feats)
 
     # apply transform
     centered = (observations.data - sess_offsets)[
@@ -206,18 +208,16 @@ def inverse_transform(
     updated = (linear_inv @ centered)[..., 0]  # (batch, n_feats)
     uncentered = updated + pop_offset  # (batch, n_feats)
 
-    poses = observations.with_data(uncentered)
+    poses = observations.update(data=uncentered)
     if return_determinants:
         linear_invs_logdet = jnp.log(jla.det(linear_invs))
-        linear_inv_logdet = linear_invs_logdet[observations.body_ids]
+        linear_inv_logdet = linear_invs_logdet[observations.stack_body_ids]
         return poses, linear_inv_logdet
     else:
         return poses
 
 
-def log_prior(
-    params: LRAParams, observations: PytreeDataset, poses: PytreeDataset
-) -> dict:
+def log_prior(params: LRAParams, observations: Dataset, poses: Dataset) -> dict:
     if params.prior_mode == "params":
         offset_logp = tfp.distributions.MultivariateNormalDiag(
             scale_diag=params.upd_var_ofs * jnp.ones(params.n_feats)
@@ -247,7 +247,7 @@ def reports(params: LRAParams) -> dict:
 
 
 def init_hyperparams(
-    observations: PytreeDataset,
+    observations: Dataset,
     config: dict,
 ) -> LRAParams:
     ref_keypts = observations.get_session(observations.ref_session)
@@ -256,8 +256,8 @@ def init_hyperparams(
     return LRAParams(
         dict(
             n_bodies=observations.n_bodies,
-            n_feats=observations.n_feats,
-            ref_body=observations.sess_bodies[observations.ref_session],
+            n_feats=observations.data.shape[-1],
+            ref_body=observations.session_body_id(observations.ref_session),
             modes=pcs._pcadata.pcs()[: config["n_dims"], :].T,
             offset=pcs._center,
             prior_mode=config.get("prior_mode", "params"),
@@ -275,7 +275,7 @@ def init_hyperparams(
 
 
 def init(
-    hyperparams: LRAParams, observations: PytreeDataset, config: dict
+    hyperparams: LRAParams, observations: Dataset, config: dict
 ) -> LRAParams:
     params = hyperparams
 
@@ -329,8 +329,8 @@ def mode_components(
 
 def apply_bodies(
     params: LRAParams,
-    observations: PytreeDataset,
-    target_bodies: Integer[Array, "n_sessions"],
+    observations: Dataset,
+    target_bodies: dict[Union[str, int], Union[str, int]],
 ):
     """
     Morph dataset so that each session has a given body.
@@ -339,26 +339,30 @@ def apply_bodies(
     ----------
     target_bodies: array, integer
         Array of body indices to assign to each session (note that in a
-        PytreeDataset, sessions are indexed by integers not strings, so this is
+        Dataset, sessions are indexed by integers not strings, so this is
         an array instead of a dictionary.)
     """
-    poses = inverse_transform(params, observations)
+    poses: Dataset = inverse_transform(params, observations)
     # form new dataset with new bodies assigned to each session
-    new_body_ids = target_bodies[observations.session_ids]
-    tgt_dataset = PytreeDataset(
-        poses.data,
-        observations.slices,
-        target_bodies,
-        ref_session=observations.ref_session,
-        body_ids=new_body_ids,
-        session_ids=observations.session_ids,
-        bodies_inv=tuple(
-            tuple(jnp.where(target_bodies == b)[0])
-            for b in range(observations.n_bodies)
-        ),
+    tgt_dataset = poses.update(
+        session_meta=observations.session_meta.update(
+            session_bodies=target_bodies
+        )
     )
-    # map to observation space using the new set of bodies
+    # map to observation space using the new assignment of bodies
     return transform(params, tgt_dataset)
+    # tgt_dataset = Dataset(
+    #     poses.data,
+    #     observations.slices,
+    #     target_bodies,
+    #     ref_session=observations.ref_session,
+    #     body_ids=new_body_ids,
+    #     session_ids=observations.stack_session_ids,
+    #     bodies_inv=tuple(
+    #         tuple(jnp.where(target_bodies == b)[0])
+    #         for b in range(observations.n_bodies)
+    #     ),
+    # )
 
 
 model = MorphModel(

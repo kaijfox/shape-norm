@@ -17,7 +17,7 @@ import time
 import jax
 
 from ..models import pose
-from ..io.dataset import FeatureDataset, PytreeDataset
+from ..io.dataset_refactor import Dataset
 from ..models.joint import JointModel, JointModelParams
 from ..logging import ArrayTrace, _keystr
 from ..io.utils import split_sessions
@@ -121,7 +121,7 @@ def _mask_gradients_by_path(model, grads, blacklist, verbose=True):
 
 def _estep(
     model: JointModel,
-    observations: PytreeDataset,
+    observations: Dataset,
     estimated_params: JointModelParams,
 ) -> JointModelParams:
     est_poses = model.morph.inverse_transform(
@@ -134,7 +134,7 @@ def _estep(
 
 def _mstep_objective(
     model: JointModel,
-    observations: PytreeDataset,
+    observations: Dataset,
     params: JointModelParams,
     aux_pdf: Float[Array, "n_samp n_discrete"],
 ) -> Scalar:
@@ -172,7 +172,7 @@ def _mstep_objective(
 
 def _mstep_loss(model: JointModel, use_priors: bool = True) -> Scalar:
     def step_loss_(
-        observations: PytreeDataset,
+        observations: Dataset,
         static_params: dict,
         hyper_params: dict,
         trained_params: optax.Params,
@@ -213,15 +213,17 @@ def construct_jitted_mstep(
 ):
     loss_func = _mstep_loss(model, use_priors)
 
-    @partial(jax.jit, static_argnums=(2,))
+    @partial(jax.jit, static_argnums=(2, 3))
     def step(
         opt_state,
-        observations: PytreeDataset,
+        observations_arr,
+        observations_meta,
         static_params,
         hyper_params,
         trained_params,
         aux_pdf,
     ):
+        observations = Dataset({"data": observations_arr, **observations_meta})
         (loss_value, objectives), grads = jax.value_and_grad(
             loss_func, argnums=3, has_aux=True
         )(observations, static_params, hyper_params, trained_params, aux_pdf)
@@ -242,11 +244,18 @@ def construct_jitted_mstep(
 
 
 def construct_jitted_estep(model: JointModel):
-    @partial(jax.jit, static_argnums=(1,))
-    def step(observations, static_params, hyper_params, trained_params):
+    @partial(jax.jit, static_argnums=(1, 2))
+    def step(
+        observations_arr,
+        observations_meta,
+        static_params,
+        hyper_params,
+        trained_params,
+    ):
         estimated_params = JointModelParams.from_types(
             model, static_params, hyper_params, trained_params
         )
+        observations = Dataset({"data": observations_arr, **observations_meta})
         return _estep(model, observations, estimated_params)
 
     return step
@@ -257,7 +266,7 @@ def _mstep(
     static_params: tuple,
     hyper_params: tuple,
     aux_pdf: Float[Array, "Nt L"],
-    observations: PytreeDataset,
+    observations: Dataset,
     jitted_step: Callable,
     opt_state,
     session_names: tuple,
@@ -307,7 +316,7 @@ def _mstep(
 
         curr_trained, opt_state, (loss_value, objectives) = step(
             opt_state,
-            step_obs,
+            *step_obs.serialize(),
             static_params,
             hyper_params,
             curr_trained,
@@ -426,7 +435,7 @@ def _initialize_or_continue_metadata(
 def iterate_em(
     model: JointModel,
     init_params: JointModelParams,
-    observations: FeatureDataset,
+    observations: Dataset,
     config: dict,
     meta: dict = None,
     first_step: int = 0,
@@ -494,9 +503,6 @@ def iterate_em(
         return_reports,
     )
 
-    # set up optimizer and jitted steps
-    pt_obs = PytreeDataset.from_pythonic(observations)
-
     jitted_mstep = construct_jitted_mstep(
         model,
         optimizer,
@@ -509,7 +515,7 @@ def iterate_em(
     # create functions used each step: batch generation / checkpointing
     if config["batch_size"] is not None:
         batch_rkey_seed = jr.PRNGKey(config["batch_seed"])
-        generate_batch = pt_obs.batch_generator(
+        generate_batch = observations.batch_generator(
             config["batch_size"],
             replace=False,
             session_names=observations.ordered_session_names(),
@@ -540,7 +546,7 @@ def iterate_em(
     for step_i in step_iter:
         step_start_time = time.time()
         aux_pdf = jitted_estep(
-            pt_obs,
+            *observations.serialize(),
             static,
             hyper,
             curr_trained,
@@ -550,7 +556,7 @@ def iterate_em(
             batch_rkey_seed, step_obs, ixs = generate_batch(batch_rkey_seed)
             step_aux = aux_pdf[ixs]
         else:
-            step_obs = pt_obs
+            step_obs = observations
             step_aux = aux_pdf
 
         if config["mstep"]["reinit_opt"]:
@@ -603,10 +609,10 @@ def iterate_em(
             if config["full_dataset_objectives"]:
                 aux_reports["dataset_logprob"] = _mstep_objective(
                     model,
-                    pt_obs,
+                    observations,
                     curr_params,
                     aux_pdf=jitted_estep(
-                        pt_obs,
+                        *observations.serialize(),
                         static,
                         hyper,
                         curr_trained,

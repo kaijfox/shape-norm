@@ -1,4 +1,5 @@
-import jax.numpy as jnp
+# import jax.numpy as np
+import numpy as np
 from collections import defaultdict
 
 
@@ -26,9 +27,9 @@ def compute_n_splits(
         n_split = {
             s: max(
                 int(
-                    jnp.ceil(count / len(sessions))
+                    np.ceil(count / len(sessions))
                     if i < len(sessions) % count
-                    else jnp.floor(count / len(sessions))
+                    else np.floor(count / len(sessions))
                 ),
                 1,
             )
@@ -92,19 +93,19 @@ def split_sessions(
             continue
 
         if mode == "consecutive":
-            parts = jnp.array_split(dataset.get_session(s), n_split[s])
+            parts = np.array_split(dataset.get_session(s), n_split[s])
             for i, arr in enumerate(parts):
                 data[f"{s}.{i}"] = arr
 
         elif mode == "interleaved":
             # split into sections of size chunk_size * n_split
-            chunks = jnp.array_split(
+            chunks = np.array_split(
                 dataset.get_session(s),
-                jnp.ceil(len(dataset) / chunk_size / n_split[s]),
+                np.ceil(len(dataset) / chunk_size / n_split[s]),
             )
             # select i'th chunk from each section and concatenate
             for i in range(n_split[s]):
-                data[f"{s}.{i}"] = jnp.concatenate(
+                data[f"{s}.{i}"] = np.concatenate(
                     [
                         chunk[array_split_slice(len(chunk), n_split[s], i)]
                         for chunk in chunks
@@ -160,7 +161,7 @@ def stack_dict(data):
     """
     data = list(data.items())
     # stack data
-    stacked = jnp.concatenate([arr for name, arr in data], axis=0)
+    stacked = np.concatenate([arr for name, arr in data], axis=0)
     # create slices
     slices = {}
     i = 0

@@ -1,11 +1,11 @@
-from .dataset import KeypointDataset
+from .dataset_refactor import Dataset
 from ..config import save_config, loads
 from .features import locked_pts, feature_types
 from .alignment import sagittal, alignment_types
 from ..project.paths import ensure_dirs
 from .utils import UUIDGenerator, select_keypt_ixs
 
-import jax.numpy as jnp
+import numpy as np
 from textwrap import dedent
 import jax.tree_util as pt
 from pathlib import Path
@@ -179,6 +179,52 @@ class DatasetLoader(object):
             return save_config(project.main_config(), full_cfg)
 
     @classmethod
+    def from_arrays(cls, data, config):
+        cls._validate_config(config)
+
+        # setup
+        data_arranged = {}
+        bodies = {}
+        kpt_ixs = select_keypt_ixs(
+            config["keypoint_names"], config["use_keypoints"]
+        )
+
+        # load data and assign a body name to each session
+        for sess, sess_meta in config["sessions"].items():
+            data_path = os.path.join(config["root_path"], sess_meta["path"])
+            data_arr = data[sess]
+
+            if data_arr.shape[1] != len(config["keypoint_names"]):
+                logging.error(
+                    f"SEVERE: recieved {data_arr.shape[1]} keypoints from '{sess}'"
+                    f", but expected {len(config['keypoint_names'])}."
+                )
+            data_arr = data_arr[:, kpt_ixs]
+            if config["invert_axes"] is not None:
+                inv_ix = config["invert_axes"]
+                data_arr[:, :, inv_ix] = -data_arr[:, :, inv_ix]
+
+            data_arranged[sess] = data_arr
+
+            if sess_meta["body"] is None:
+                bodies[sess] = f"body-{sess}"
+            else:
+                bodies[sess] = sess_meta["body"]
+
+        # form dataset from dictionary of keypoint arrays
+        return Dataset.from_arrays(
+            data_arranged,
+            bodies,
+            config["ref_session"],
+            {
+                "keypoint_names": config["use_keypoints"],
+                "keypoint_ids": {
+                    kp: i for i, kp in enumerate(config["use_keypoints"])
+                },
+            },
+        )
+
+    @classmethod
     def load(cls, config, meta_only=False, allow_subsample=True):
         """
         Parameters
@@ -209,13 +255,11 @@ class DatasetLoader(object):
                     )
                 data_arr = data_arr[:, kpt_ixs]
                 if config["invert_axes"] is not None:
-                    data_arr = data_arr.at[:, :, config["invert_axes"]].set(
-                        -data_arr[:, :, config["invert_axes"]]
-                    )
-
+                    inv_ix = config["invert_axes"]
+                    data_arr[:, :, inv_ix] = -data_arr[:, :, inv_ix]
 
             else:
-                data_arr = jnp.empty((0, len(kpt_ixs), 0))
+                data_arr = np.empty((0, len(kpt_ixs), 0))
 
             if config["subsample"] is not None and allow_subsample:
                 data_arr = data_arr[:: config["subsample"]]
@@ -227,8 +271,16 @@ class DatasetLoader(object):
                 bodies[sess] = sess_meta["body"]
 
         # form dataset from dictionary of keypoint arrays
-        return KeypointDataset.from_arrays(
-            data, bodies, config["ref_session"], config["use_keypoints"]
+        return Dataset.from_arrays(
+            data,
+            bodies,
+            config["ref_session"],
+            {
+                "keypoint_names": config["use_keypoints"],
+                "keypoint_ids": {
+                    kp: i for i, kp in enumerate(config["use_keypoints"])
+                },
+            },
         )
 
     @staticmethod
@@ -267,7 +319,7 @@ class raw_npy(DatasetLoader):
     @staticmethod
     def _load_keypoint_array(path, config):
         """Load a keypoint array from a .npy file."""
-        return jnp.load(path)
+        return np.load(path)
 
     @classmethod
     def setup_project_config(
@@ -371,7 +423,7 @@ class h5(DatasetLoader):
         import h5py
 
         with h5py.File(path, "r") as f:
-            return jnp.array(f[config["h5_key"]])
+            return f[config["h5_key"]]
 
     @classmethod
     def setup_project_config(

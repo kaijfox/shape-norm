@@ -1,4 +1,4 @@
-from ..io.dataset import KeypointDataset, FeatureDataset, Dataset
+from ..io.dataset_refactor import Dataset
 from ..project.paths import Project
 from ..config import load_calibration_data, save_calibration_data
 from ..pca import fit_with_center, CenteredPCA
@@ -16,23 +16,21 @@ class reducer(object):
     defaults = dict()
 
     @classmethod
-    def reduce(cls: type, dataset: KeypointDataset, config) -> FeatureDataset:
+    def reduce(cls: type, dataset: Dataset, config) -> Dataset:
         """Reduce a dataset to a set of features.
 
         Only valid for alignment method 'locked_pts'.
 
         Parameters
         ----------
-        dataset : FeatureDataset
+        dataset : Dataset
         config : dict
             `features` section of config file.
         """
-        return dataset.as_features().with_data(
-            cls.reduce_array(dataset.data, config)
-        )
+        return dataset.update(data=cls.reduce_array(dataset.data, config))
 
     @classmethod
-    def inflate(cls, dataset: FeatureDataset, config: dict):
+    def inflate(cls, dataset: Dataset, config: dict):
         """Reconstruct a dataset from a set of features."""
         # reinflate removed axes as zeros
         inflated = dataset.with_data(cls.inflate_array(dataset.data, config))
@@ -62,23 +60,21 @@ class reducer(object):
         raise NotImplementedError
 
     @classmethod
-    def calibrate(cls, dataset: KeypointDataset, config, **kwargs):
+    def calibrate(cls, dataset: Dataset, config, **kwargs):
         """Calibrate feature extraction for a dataset.
 
         Parameters
         ----------
-        dataset : KeypointDataset
+        dataset : Dataset
         config : dict
             Full config
         """
-        calib = config["features"]["calibration_data"] = dict(
-            kpt_names=dataset.keypoint_names
-        )
+        calib = config["features"]["calibration_data"]
         calib.update(cls._calibrate(dataset, config, **kwargs))
         return config
 
     @staticmethod
-    def _calibrate(dataset: KeypointDataset, config):
+    def _calibrate(dataset: Dataset, config):
         """Calibrate feature extraction for a dataset."""
         raise NotImplementedError
 
@@ -126,15 +122,15 @@ class locked_pts(reducer):
         return arr.reshape(inflated_shape)
 
     @staticmethod
-    def _calibrate(dataset: KeypointDataset, config: dict):
+    def _calibrate(dataset: Dataset, config: dict):
         """Calibrate feature extraction for a dataset."""
         # find keypoints with zero std
-        flat_data = dataset.as_features()
-        reduce_ixs = jnp.where(flat_data.data.std(axis=0) < 1e-5)[0].tolist()
+        flat_data = dataset.data.reshape((dataset.data.shape[0], -1))
+        reduce_ixs = jnp.where(flat_data.std(axis=0) < 1e-5)[0].tolist()
 
         return dict(
             reduce_ixs=reduce_ixs,
-            n_kpts=dataset.n_points,
+            n_kpts=len(dataset.aux["keypoint_names"]),
         )
 
     @staticmethod
@@ -174,10 +170,10 @@ class no_reduction(reducer):
         return arr.reshape(inflated_shape)
 
     @staticmethod
-    def _calibrate(dataset: KeypointDataset, config: dict):
+    def _calibrate(dataset: Dataset, config: dict):
         """Calibrate feature extraction for a dataset."""
         return dict(
-            n_kpts=dataset.n_points,
+            n_kpts=len(dataset.aux["keypoint_names"]),
         )
 
     @staticmethod
@@ -223,12 +219,12 @@ class pcs(reducer):
         return flat_arr.reshape(arr.shape[:-1] + kpt_shape)
 
     @classmethod
-    def calibrate(cls, dataset: KeypointDataset, config, n_dims=None):
+    def calibrate(cls, dataset: Dataset, config, n_dims=None):
         """Calibrate feature extraction for a dataset.
 
         Parameters
         ----------
-        dataset : KeypointDataset
+        dataset : Dataset
         config : dict
             Full config
         n_dims : int
@@ -239,11 +235,11 @@ class pcs(reducer):
         return super().calibrate(dataset, config, n_dims=n_dims)
 
     @staticmethod
-    def _calibrate(dataset: KeypointDataset, config: dict, n_dims=None):
+    def _calibrate(dataset: Dataset, config: dict, n_dims=None):
         """Calibrate feature extraction for a dataset."""
         config = config["features"]
 
-        flat_data = dataset.as_features().data
+        flat_data = dataset.data.reshape((dataset.data.shape[0], -1))
         if (
             config["max_pts"] is not None
             and flat_data.shape[0] > config["max_pts"]
@@ -281,9 +277,10 @@ class pcs(reducer):
         # (n_samples, n_dims, n_dims), sum over axis 1 (aka -2) gives flat_data
         reconst_parts = coords[..., None] * pcs._pcadata.pcs()[None, ...]
         cum_reconst = jnp.cumsum(reconst_parts, axis=-2)
+        n_kpts = len(dataset.aux["keypoint_names"])
         kpt_shape = (
-            dataset.n_points,
-            flat_arr.shape[-1] // dataset.n_points,
+            n_kpts,
+            flat_arr.shape[-1] // n_kpts,
         )
         cum_dists = cum_reconst - flat_arr[..., None, :]
         errs = jla.norm(cum_dists.reshape(flat_arr.shape + kpt_shape), axis=-1)
@@ -293,7 +290,7 @@ class pcs(reducer):
             pcs=pcs._pcadata,
             center=pcs._center,
             mean_errs=errs.mean(axis=0),
-            n_kpts=dataset.n_points,
+            n_kpts=n_kpts,
             n_dims=int(selected_ix) + 1,
         )
 
@@ -386,12 +383,12 @@ class bones(reducer):
         return keypts
 
     @classmethod
-    def calibrate(cls, dataset: KeypointDataset, config, n_dims=None):
+    def calibrate(cls, dataset: Dataset, config, n_dims=None):
         """Calibrate feature extraction for a dataset.
 
         Parameters
         ----------
-        dataset : KeypointDataset
+        dataset : Dataset
         config : dict
             Full config
         n_dims : int
@@ -402,7 +399,7 @@ class bones(reducer):
         return super().calibrate(dataset, config, n_dims=n_dims)
 
     @staticmethod
-    def _calibrate(dataset: KeypointDataset, config: dict, n_dims=None):
+    def _calibrate(dataset: Dataset, config: dict, n_dims=None):
         """Calibrate feature extraction for a dataset."""
 
         arms = armature.Armature.from_config(config["dataset"])
@@ -439,7 +436,7 @@ feature_types = {
 default_feature_type = "locked_pts"
 
 
-def reduce_to_features(dataset: KeypointDataset, config: dict):
+def reduce_to_features(dataset: Dataset, config: dict):
     """Reduce keypoint dataset to non-singular features.
 
     dataset : Dataset
@@ -451,7 +448,7 @@ def reduce_to_features(dataset: KeypointDataset, config: dict):
     feat_type = config["type"]
     if feat_type not in feature_types:
         raise NotImplementedError(f"Unknown dataset type: {feat_type}")
-    if hasattr(dataset, "_is_dataset"):
+    if hasattr(dataset, "from_arrays"):
         return feature_types[feat_type].reduce(dataset, config)
     else:
         return feature_types[feat_type].reduce_array(dataset, config)
@@ -462,7 +459,7 @@ def inflate(dataset, config):
     feat_type = config["type"]
     if feat_type not in feature_types:
         raise NotImplementedError(f"Unknown dataset type: {feat_type}")
-    if hasattr(dataset, "_is_dataset"):
+    if hasattr(dataset, "from_arrays"):
         return feature_types[feat_type].inflate(dataset, config)
     else:
         return feature_types[feat_type].inflate_array(dataset, config)

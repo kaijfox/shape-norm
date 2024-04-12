@@ -2,7 +2,7 @@ from ..models.joint import JointModel, JointModelParams, initialize_joint_model
 from ..models.instantiation import get_model
 from ..io.utils import split_sessions
 from . import em
-from ..io.dataset import Dataset
+from ..io.dataset_refactor import Dataset
 from ..io.loaders import load_dataset
 from ..io.features import reduce_to_features
 from ..io.alignment import align
@@ -77,15 +77,21 @@ def modify_dataset_split(dataset, cfg):
     cfg : dict
         `fit` section of config dictionary.
     """
-    split_dataset = split_sessions(
+    split_dataset: Dataset = split_sessions(
         dataset,
         split_all=cfg["split_all"],
         mode=cfg["split_type"],
         count=cfg["split_count"],
         chunk_size=cfg["split_size"],
     )
-    return split_dataset.with_sess_bodies(
-        {s: f"body-{s}" for s in split_dataset.sessions}, new_names=True
+    return split_dataset.update(
+        session_meta=split_dataset.session_meta.update(
+            body_ids={
+                f"body-{s}": split_dataset.session_id(s)
+                for s in split_dataset.sessions
+            },
+            session_bodies={s: f"body-{s}" for s in split_dataset.sessions},
+        )
     )
 
 
