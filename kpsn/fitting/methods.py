@@ -152,7 +152,8 @@ def load_standard(model_dir: Path):
     model_dir : pathlib.Path
         Path to model directory.
     """
-    return jl.load(model_dir / "checkpoint.p")
+    config = load_model_config(model_dir / "model.yml")
+    return em._load_checkpoint(model_dir / "checkpoint.p", config=config)
 
 
 class FitMethod(NamedTuple):

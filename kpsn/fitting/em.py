@@ -21,6 +21,7 @@ from ..io.dataset_refactor import Dataset
 from ..models.joint import JointModel, JointModelParams
 from ..logging import ArrayTrace, _keystr
 from ..io.utils import split_sessions
+from ..models.instantiation import get_model
 
 
 def fit_model(model, dataset, config):
@@ -57,8 +58,55 @@ def _save_checkpoint(save_dir, contents):
         return
     checkpoint_file = save_dir / f"checkpoint.p"
     save_dir.mkdir(exist_ok=True)
+    contents = {
+        **contents,
+        **{
+            "params": {
+                "pose": contents["params"].pose._tree,
+                "morph": contents["params"].morph._tree,
+            },
+            "meta": {
+                **contents["meta"],
+                **{
+                    "param_hist": {
+                        "n_steps": contents["meta"]["param_hist"]._n_steps,
+                        "arrays": contents["meta"]["param_hist"]._tree,
+                    }
+                },
+            },
+        },
+    }
     jl.dump(contents, checkpoint_file)
     return contents
+
+
+def _load_checkpoint(filepath, model: JointModel = None, config: dict = None):
+    """
+    Load a checkpoint file.
+
+    Parameters
+    ----------
+    filepath : PathLike or str
+    model : JointModel or None
+    config : dict or None
+        Full config dictionary. One of model or config must be provided.
+    """
+    raw = jl.load(str(filepath))
+    # old checkpoints have params as a JointModelParams object
+    if isinstance(raw["params"], JointModelParams):
+        return raw
+    # new checkpoints have params and param_hist as dicts
+    if model is None:
+        if config is None:
+            raise ValueError("Must provide either model or config.")
+        model = get_model(config)
+    raw["params"] = JointModelParams(
+        model.pose.ParamClass(raw["params"]["pose"]),
+        model.morph.ParamClass(raw["params"]["morph"]),
+    )
+    raw["meta"]["param_hist"] = ArrayTrace(raw["meta"]["param_hist"]["n_steps"])
+    raw["meta"]["param_hist"]._tree = raw["meta"]["param_hist"]["arrays"]
+    return raw
 
 
 def _check_should_stop_early(loss_hist, step_i, tol, stop_window):
@@ -369,9 +417,7 @@ def _initialize_or_continue_metadata(
             meta["mstep_losses"] = jnp.full(
                 [n_steps, config["mstep"]["n_steps"]], jnp.nan
             )
-        if return_param_hist is True:
-            meta["param_hist"] = [init_params]
-        elif return_param_hist == "trace":
+        if return_param_hist == "trace":
             meta["param_hist"] = ArrayTrace(n_steps + 1)
             meta["param_hist"].record(init_params, 0)
         elif return_param_hist == "mstep":
@@ -407,9 +453,8 @@ def _initialize_or_continue_metadata(
                     ),
                 ]
             )
-        if return_param_hist is True:
-            meta_new["param_hist"] = meta["param_hist"]
-        elif return_param_hist == "trace":
+
+        if return_param_hist == "trace":
             meta_new["param_hist"] = ArrayTrace(n_steps + 1)
             meta_new["param_hist"].initialize(meta["param_hist"][0])
             meta_new["param_hist"].record(
@@ -593,9 +638,7 @@ def iterate_em(
             meta["mstep_losses"] = (
                 meta["mstep_losses"].at[step_i, :mstep_len].set(loss_hist_mstep)
             )
-        if return_param_hist is True:
-            meta["param_hist"].append(curr_trained)
-        elif return_param_hist == "trace":
+        if return_param_hist == "trace":
             meta["param_hist"].record(curr_trained, step_i + 1)
         elif return_param_hist == "mstep":
             meta["param_hist"].record(mstep_param_trace.as_dict(), step_i)
