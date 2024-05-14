@@ -32,9 +32,7 @@ class reducer(object):
     @classmethod
     def inflate(cls, dataset: Dataset, config: dict):
         """Reconstruct a dataset from a set of features."""
-        # reinflate removed axes as zeros
-        inflated = dataset.with_data(cls.inflate_array(dataset.data, config))
-        return inflated.as_keypoints(config["calibration_data"]["kpt_names"])
+        return dataset.update(data=cls.inflate_array(dataset.data, config))
 
     @staticmethod
     def reduce_array(arr, config):

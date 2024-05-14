@@ -182,7 +182,7 @@ def transform(params: LRAParams, poses: Dataset) -> Float[Array, "*#K n_feats"]:
     updated = (linear_parts @ centered)[..., 0]  # (batch, n_feats)
     uncentered = updated + sess_offsets  # (batch, n_feats)
 
-    return poses.with_data(uncentered)
+    return poses.update(data=uncentered)
 
 
 def inverse_transform(

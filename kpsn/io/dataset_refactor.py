@@ -83,12 +83,12 @@ class SessionMetadata:
 
     def session_body_name(self, session: Union[str, int]) -> dict:
         if isinstance(session, str):
-            session = self.session_name(session)
+            session = self.session_id(session)
         return self.body_name(self._session_bodies[session])
 
     def session_body_id(self, session: Union[str, int]) -> dict:
         if isinstance(session, str):
-            session = self.session_name(session)
+            session = self.session_id(session)
         return self._session_bodies[session]
 
     def bodies_inv(self) -> dict[str, tuple[str]]:
@@ -385,7 +385,7 @@ class Dataset:
     @property
     def bodies(self):
         return set(
-            self._session_meta.body_name(i)
+            self._session_meta.session_body_name(i)
             for i in self.stack_meta.slices.keys()
         )
 

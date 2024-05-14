@@ -21,6 +21,9 @@ def compute_n_splits(
     count: int,
 ):
     """Calculate number of splits to be performed for each session."""
+    from .dataset_refactor import Dataset
+
+    dataset: Dataset = dataset
     if split_all:
         n_split = {s: count for s in dataset.sessions}
     else:
@@ -33,7 +36,7 @@ def compute_n_splits(
                 ),
                 1,
             )
-            for b, sessions in dataset._bodies_inv.items()
+            for b, sessions in dataset.bodies_inv.items()
             for i, s in enumerate(dataset.sessions)
         }
     return n_split
@@ -50,7 +53,7 @@ def split_body_inv(
     # split sessions according to n_split
     body_inv = defaultdict(list)
     source_session_inv = defaultdict(list)
-    for b, ss in dataset._bodies_inv.items():
+    for b, ss in dataset.bodies_inv.items():
         for s in ss:
             if n_split[s] == 1:
                 body_inv[b].append(s)
@@ -81,6 +84,9 @@ def split_sessions(
         Size of chunks to split sessions into if mode is 'interleaved', in frames.
     """
 
+    from .dataset_refactor import Dataset, StackedArrayMetadata, SessionMetadata
+
+    dataset: Dataset = dataset
     n_split = compute_n_splits(dataset, split_all, mode, count)
     data = {}
     bodies = {}
@@ -89,7 +95,7 @@ def split_sessions(
     for s in dataset.sessions:
         if n_split[s] == 1:
             data[s] = dataset.get_session(s)
-            bodies[s] = dataset.sess_bodies[s]
+            bodies[s] = dataset.session_body_name(s)
             continue
 
         if mode == "consecutive":
@@ -113,14 +119,13 @@ def split_sessions(
                 )
 
         for i in range(n_split[s]):
-            bodies[f"{s}.{i}"] = dataset.sess_bodies[s]
+            bodies[f"{s}.{i}"] = dataset.session_body_name(s)
 
-    data, slices = stack_dict(data)
-    ref = dataset.ref_session
+    ref = dataset.session_name(dataset.ref_session)
     if n_split[ref] > 1:
         ref = f"{ref}.0"
 
-    return dataset.with_sessions(data, slices, bodies, ref)
+    return Dataset.from_arrays(data, bodies, ref, dataset.aux)
 
 
 class UUIDGenerator(object):
@@ -144,7 +149,7 @@ class UUIDGenerator(object):
                 return uuid
 
 
-def stack_dict(data):
+def stack_dict(data: dict):
     """Stack a dict of arrays into a single array.
 
     Parameters
@@ -171,7 +176,7 @@ def stack_dict(data):
     return stacked, slices
 
 
-def select_keypt_ixs(keypt_names, use_keypoints):
+def select_keypt_ixs(keypt_names: list[str], use_keypoints: list[str]):
     """Select a subset of keypoints from a dataset.
 
     Parameters
