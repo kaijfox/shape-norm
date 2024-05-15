@@ -2,7 +2,7 @@ from .styles import colorset
 from ..io.loaders import load_dataset
 from ..io.alignment import align
 from ..io.armature import Armature
-from ..io.dataset import Dataset
+from ..io.dataset_refactor import Dataset
 from .util import (
     plot_mouse_views,
     select_frame_gallery,
@@ -47,7 +47,6 @@ def session_means(
             Armature.from_config(config["dataset"]),
             color=colors.neutral,
         )
-        ax[k].set_aspect("equal")
         ax[k].set_title(session)
 
     axes_off(ax)

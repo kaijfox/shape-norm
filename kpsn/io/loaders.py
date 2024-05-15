@@ -151,6 +151,7 @@ def _extract_keypoints_from_array(
     use_keypoints,
     invert_axes,
     subsample,
+    subsample_to,
     allow_subsample=True,
     session_name_for_error=None,
 ):
@@ -172,8 +173,23 @@ def _extract_keypoints_from_array(
         inv_ix = invert_axes
         data_arr[:, :, inv_ix] = -data_arr[:, :, inv_ix]
 
-    if subsample is not None and allow_subsample:
-        data_arr = data_arr[::subsample]
+    print("[loaders] presub", data_arr.shape[0])
+    if allow_subsample:
+        if subsample_to is not None:
+            N = data_arr.shape[0]
+            tgt = subsample_to
+            if N > tgt:
+                data_arr = data_arr[: tgt * (N // tgt) : N // tgt]
+            else:
+                logging.warn(
+                    f"Session " + f"{session_name_for_error} "
+                    if session_name_for_error
+                    else "" + f"has fewer frames than `subsample_to`"
+                    f" (={tgt}). Subsampling disabled for this session."
+                )
+        elif subsample is not None:
+            data_arr = data_arr[::subsample]
+    print("[loaders] postsub", data_arr.shape[0])
 
     return data_arr
 
@@ -242,6 +258,7 @@ class DatasetLoader(object):
                     config["use_keypoints"],
                     config["invert_axes"],
                     config["subsample"],
+                    config.get("subsample_to", None),
                     allow_subsample,
                     sess,
                 )
@@ -294,6 +311,7 @@ class DatasetLoader(object):
                     config["use_keypoints"],
                     config["invert_axes"],
                     config["subsample"],
+                    config.get("subsample_to", None),
                     allow_subsample,
                     sess,
                 )
@@ -344,6 +362,9 @@ class DatasetLoader(object):
         assert (
             "subsample" in config
         ), "No subsample rate specified. Use `null` to disable frame subsampling."
+        assert (config["subsample"] is None) or (
+            config.get("subsample_to", None) is None
+        ), "One of subsample or subsample_to must be null."
 
 
 class raw_npy(DatasetLoader):
@@ -371,6 +392,7 @@ class raw_npy(DatasetLoader):
         posterior=None,
         invert_axes=None,
         subsample=None,
+        subsample_to=None,
         alignment_type=None,
         feature_type=None,
     ):
@@ -401,6 +423,10 @@ class raw_npy(DatasetLoader):
             bodies to specific sessions.
         subsample : int, default None
             Reduce frame rate by taking every `subsample`th frame.
+        subsample_to : int, default None
+            Reduce frame rate by taking every `n`th frame where `n` is chosen
+            for each session such that the total number of frames in each loaded
+            session is `subsample_to`.
         alignment_type : str, default None
             Alignment method to use. If None, will use 'sagittal'.
         feature_type : str, default None
@@ -426,6 +452,7 @@ class raw_npy(DatasetLoader):
         dataset_detail = dict(
             type="raw_npy",
             subsample=subsample,
+            subsample_to=subsample_to,
             **session_detail,
             **keypoint_detail,
         )
@@ -585,6 +612,7 @@ class h5(DatasetLoader):
         keypoint_parents=None,
         bodies=None,
         subsample=None,
+        subsample_to=None,
         alignment_type=None,
         anterior=None,
         posterior=None,
@@ -595,6 +623,7 @@ class h5(DatasetLoader):
         dataset_detail = dict(
             type="h5",
             subsample=subsample,
+            subsample_to=subsample_to,
             h5_key=h5_key,
             **_session_file_config(
                 filepaths,

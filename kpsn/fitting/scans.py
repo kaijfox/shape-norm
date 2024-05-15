@@ -587,8 +587,18 @@ def jsds_to_reference(project, scan_name, progress=False):
         dataset=dataset,
         _body_inv=_body_inv,
         ref_cloud=ref_cloud,
-        progress="Unmorphed",
+        progress="Unmorphed" if progress else False,
     )
+
+    # warn if any JSDs negative
+    for b, s in [(b, s) for b, l in _body_inv.items() for s in l]:
+        neg_models = [m for m, jsds in model_jsds.items() if jsds[b][s] < 0]
+        if base_jsds[b][s] < 0:
+            neg_models += ["unmorphed"]
+        if len(neg_models):
+            logging.warning(
+                f"Negative JSD for {s} under models: {' '.join(neg_models)}"
+            )
     return model_jsds, base_jsds, dataset
 
 
