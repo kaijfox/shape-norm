@@ -15,6 +15,7 @@ import jax.numpy.linalg as jla
 import matplotlib.pyplot as plt
 import logging
 
+
 type_name = "lowrank_affine"
 defaults = dict(
     n_dims=None,
@@ -37,6 +38,7 @@ def calibrate_base_model(dataset: FeatureDataset, config, n_dims=None):
     config : dict
         Full model and project config.
     """
+
     # Fit PCA model to morph dataset and select number of dimensions to explain
     # target amount of variance
     full_config = config
@@ -49,20 +51,21 @@ def calibrate_base_model(dataset: FeatureDataset, config, n_dims=None):
     else:
         selected_ix = n_dims - 1
 
-    # variance of each component in feature space
-    mean_vars = jnp.var(
-        jnp.array(
-            [dataset.get_session(s).mean(axis=0) for s in dataset.sessions]
-        ),
-        axis=0,
-    )
+    if config["prior_mode"] == "params":
+        # variance of each component in feature space
+        mean_vars = jnp.var(
+            jnp.array(
+                [dataset.get_session(s).mean(axis=0) for s in dataset.sessions]
+            ),
+            axis=0,
+        )
+        config["upd_var_ofs"] = float(mean_vars.mean())
+        config["upd_var_modes"] = 0.1
+    else:
+        config["dist_var"] = 1.0
 
-    # set config and save calculated values
+    # set config and save calculated calibration
     config["n_dims"] = int(selected_ix) + 1
-    config["upd_var_ofs"] = float(mean_vars.mean())
-    config["upd_var_modes"] = 0.1
-
-    # save info about calibration for plotting later
     config["calibration_data"] = dict(
         variance_explained=scree,
         n_dims=selected_ix,
@@ -94,10 +97,14 @@ def plot_calibration(config: dict, colors):
     return fig
 
 
+# conversion from string parameter modes to int
+PriorModes = dict(params=0, distance=1)
+
+
 class LRAParams(MorphModelParams):
     # --- static/shape params
     n_dims: int = _getter("n_dims")
-    prior_mode: str = _getter("prior_mode")
+    prior_mode: int = _getter("prior_mode")
     # --- hyperparams
     upd_var_modes: Scalar = _getter("upd_var_modes")
     upd_var_ofs: Scalar = _getter("upd_var_ofs")
@@ -218,7 +225,8 @@ def inverse_transform(
 def log_prior(
     params: LRAParams, observations: PytreeDataset, poses: PytreeDataset
 ) -> dict:
-    if params.prior_mode == "params":
+
+    if params.prior_mode == PriorModes["params"]:
         offset_logp = tfp.distributions.MultivariateNormalDiag(
             scale_diag=params.upd_var_ofs * jnp.ones(params.n_feats)
         ).log_prob(params.offset_updates)
@@ -250,8 +258,18 @@ def init_hyperparams(
     observations: PytreeDataset,
     config: dict,
 ) -> LRAParams:
+
     ref_keypts = observations.get_session(observations.ref_session)
     pcs = fit_with_center(ref_keypts)
+
+    # if prior mode given as a string, convert to int
+    prior_mode = config.get("prior_mode", "params")
+    if prior_mode not in PriorModes:
+        raise ValueError(
+            f"Invalid prior mode for lowank_affine morph: {prior_mode}. "
+            f"Options are {repr(list(PriorModes.keys()))}."
+        )
+    prior_mode = PriorModes[prior_mode]
 
     return LRAParams(
         dict(
@@ -260,7 +278,7 @@ def init_hyperparams(
             ref_body=observations.sess_bodies[observations.ref_session],
             modes=pcs._pcadata.pcs()[: config["n_dims"], :].T,
             offset=pcs._center,
-            prior_mode=config.get("prior_mode", "params"),
+            prior_mode=prior_mode,
             dist_var=config.get("dist_var", 1.0),
             **get_entries(
                 config,
