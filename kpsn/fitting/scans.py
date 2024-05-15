@@ -1,6 +1,5 @@
 from ..config import (
     loads,
-    load_project_config,
     load_config,
     flatten,
     deepen,
@@ -9,11 +8,15 @@ from ..config import (
     save_model_config,
 )
 from ..project.paths import ensure_dirs, Project, recursive_update, create_model
-from .methods import fit_types, fit, modify_dataset, load_and_prepare_dataset
+from .methods import (
+    fit_types,
+    fit,
+    prepare_dataset,
+)
 from ..io.loaders import load_dataset
-from ..io.alignment import align
-from ..io.features import reduce_to_features, inflate
-from ..io.dataset import FeatureDataset, KeypointDataset
+
+from ..io.features import inflate
+from ..io.dataset_refactor import Dataset
 from ..io.utils import split_body_inv
 from ..logging import ArrayTrace
 from ..models.joint import JointModelParams, JointModel
@@ -28,7 +31,8 @@ from ..clouds import PointCloudDensity, ball_cloud_js
 from .methods import load_fit
 
 import jax.tree_util as pt
-from typing import Tuple
+from typing import Tuple, Union
+from os import PathLike
 from pathlib import Path
 import jax.numpy as jnp
 import logging
@@ -97,6 +101,7 @@ def setup_scan_config(
 def run_scan(
     project: Project,
     scan_name: str,
+    dataset: Dataset = None,
     checkpoint_every: int = 10,
     log_every: int = -1,
     progress: bool = False,
@@ -105,6 +110,8 @@ def run_scan(
     """Load configs and run the desired scan."""
     scan_config = load_config(project.scan(scan_name) / "scan.yml")
     model_config = load_model_config(project.scan(scan_name) / "base_model.yml")
+    if dataset is None:
+        dataset = load_dataset(model_config["dataset"])
     for model_name, scan_params in scan_config["models"].items():
         if force_restart:
             model_dir = project.model(model_name)
@@ -117,7 +124,7 @@ def run_scan(
             config=model_config,
             config_overrides=scan_params,
         )
-        fit(model_dir, checkpoint_every, log_every, progress)
+        fit(model_dir, dataset, checkpoint_every, log_every, progress)
 
 
 scan_cfg_structure = loads(
@@ -126,66 +133,167 @@ scan_cfg_structure = loads(
 )
 
 
+def _resolve_model_config(
+    project_or_config: Project, scan_name=None, model_name=None
+):
+    """
+    Resolve a model config from a project, scan, or model name.
+
+    Parameters
+    ----------
+    project_or_config : Project, str or PathLike, dict
+        Project from which configs should be loaded, or path to a config file,
+        or the config itself.
+    scan_name : str
+        Scan to load dataset for. Optional if config or path to config is
+        provided, or if a model_name is provided.
+    model_name : str
+        Model to load dataset for. Optional if config or path to config is
+        provided, or if a scan_name is provided."""
+    project = project_or_config
+    if isinstance(project, dict):
+        cfg = project
+    else:
+        if scan_name is not None:
+            config_path = project.scan(scan_name) / "base_model.yml"
+        elif model_name is not None:
+            config_path = project.model_config(model_name)
+        else:
+            model_path = Path(project)
+            config_path = model_path / "model.yml"
+        cfg = load_model_config(config_path)
+    return cfg
+
+
 def load_scan_dataset(
-    project: Project, scan_name
-) -> Tuple[FeatureDataset, KeypointDataset]:
+    project_or_config: Project,
+    scan_name=None,
+    model_name=None,
+    allow_subsample=True,
+) -> Tuple[Dataset, dict]:
     """Load modified dataset for/from a scan.
+
+    Parameters
+    ----------
+    project_or_config : Project, str or PathLike, dict
+        Project from which configs should be loaded, or path to a config file,
+        or the config itself.
+    scan_name : str
+        Scan to load dataset for. Optional if config or path to config is
+        provided, or if a model_name is provided.
+    model_name : str
+        Model to load dataset for. Optional if config or path to config is
+        provided, or if a scan_name is provided.
+    allow_subsample : bool
+        Allow subsampling of the dataset when loading.
 
     Returns
     -------
-    dataset : FeatureDataset
-        Dataset with modified sessions.
-    keypoint_datasset: KeypointDataset
-        Inflated dataset with keypoints."""
-    scan_cfg = load_config(project.scan(scan_name) / "scan.yml")
-    model_name = list(scan_cfg["models"].keys())[0]
+    dataset : Dataset
+    config : dict
+        Full model and project config."""
 
-    # load split and non-split versions of the dataset
-    cfg = load_model_config(project.model_config(model_name))
-    dataset = load_dataset(cfg["dataset"])
-    dataset_aligned, align_inverse = align(dataset, cfg["alignment"])
-    dataset_reduced, reduction_inverse = reduce_to_features(
-        dataset_aligned, cfg["features"]
-    )
-    dataset_train = modify_dataset(project.model(model_name), dataset_reduced)
-    return (
-        inflate(dataset_train, cfg["features"], reduction_inverse),
-        dataset_train,
-    )
+    cfg = _resolve_model_config(project_or_config, scan_name, model_name)
+    return load_dataset(cfg["dataset"], allow_subsample=allow_subsample), cfg
 
 
-def _dataset_and_bodies_inv(
-    project, model_name=None, return_session_inv=False, allow_subsample=True
+def prepare_scan_dataset(
+    dataset: Dataset,
+    project_or_config: Union[Project, dict, str, PathLike],
+    scan_name: str = None,
+    model_name: str = None,
+    all_versions: bool = False,
+    return_session_inv: bool = False,
 ):
+    """Prepare a loaded dataset for a scan.
 
-    if model_name is None:
-        model_path = Path(project)
-        config_path = model_path / "model.yml"
-    else:
-        model_path = project.model(model_name)
-        config_path = project.model_config(model_name)
+    Parameters
+    ----------
+    dataset : Dataset
+        Loaded (unprepared) dataset.
+    config : dict
+        Full model and project config.
+    all_versions : bool
+        Return all versions (raw, aligned, feature-extracted) of the dataset.
+    return_session_inv : bool
+        Return the session mapping used to create the split sessions as part of
+        split_metadata.
 
-    cfg = load_model_config(config_path)
-    dataset_orig, _ = load_and_prepare_dataset(
-        cfg, modify=False, allow_subsample=allow_subsample
+    Returns
+    -------
+    prepped : Dataset
+    split_meta : dict
+        Mapping from bodies in the original dataset to sessions in the prepared
+        dataset. If `return_session_inv` is True, a tuple of this mapping and
+        one from original dataset session names to the split dataset sessions
+        deriving from them.
+    align_inv : dict
+        Data required to invert alignment.
+    """
+    config = _resolve_model_config(project_or_config, scan_name, model_name)
+    prepped, align_inv = prepare_dataset(
+        dataset, config, all_versions=all_versions
     )
-    dataset = modify_dataset(model_path, dataset_orig)
-    _inflate = lambda d: inflate(d, cfg["features"])
-
-    if cfg["fit"]["type"] != "split":
-        raise ValueError("This analysis is only for fits of type 'split'.")
 
     # map from original dataset bodies to sessions in the split dataset
     _body_inv, _session_inv = split_body_inv(
-        dataset_orig,
-        cfg["fit"]["split_all"],
-        cfg["fit"]["split_type"],
-        cfg["fit"]["split_count"],
+        dataset,
+        config["fit"]["split_all"],
+        config["fit"]["split_type"],
+        config["fit"]["split_count"],
     )
 
     if return_session_inv:
-        return dataset, (_body_inv, _session_inv), _inflate
-    return dataset, _body_inv, _inflate
+        return prepped, (_body_inv, _session_inv), align_inv
+    return prepped, _body_inv, align_inv
+
+
+def load_and_prepare_scan_dataset(
+    project,
+    scan_name=None,
+    model_name=None,
+    all_versions=False,
+    return_session_inv=False,
+    allow_subsample=True,
+):
+    """Load and prepare a dataset for a scan.
+
+    Parameters
+    ----------
+    project : Project, str or PathLike, dict
+        Project from which configs should be loaded, or path to a config file,
+        or the config itself.
+    scan_name : str
+        Scan to load dataset for. Optional if config or path to config is
+        provided, or if a model_name is provided.
+    model_name : str
+        Model to load dataset for. Optional if config or path to config is
+        provided, or if a scan_name is provided.
+    all_versions : bool
+        Return all versions of the dataset.
+    return_session_inv : bool
+        Return the session mapping used to create the split sessions as part of
+        split_metadata.
+    allow_subsample : bool
+        Allow subsampling of the dataset when loading.
+
+    Returns
+    -------
+    dataset : Dataset
+    split_meta : dict
+        Mapping from bodies in the original dataset to sessions in the prepared
+        dataset. If `return_session_inv` is True, a tuple of this mapping and
+        one from original dataset session names to the split dataset sessions
+        deriving from them.
+    config : dict
+    """
+
+    dataset, cfg = load_scan_dataset(
+        project, scan_name, model_name, allow_subsample
+    )
+    return prepare_scan_dataset(
+        dataset, cfg, all_versions, return_session_inv
+    ) + (cfg,)
 
 
 def model_withinbody_reconst_errs(
@@ -206,9 +314,8 @@ def model_withinbody_reconst_errs(
     checkpoint = load_fit(project.model(model_name))
     cfg = load_model_config(project.model_config(model_name))
     if dataset is None:
-        dataset, _body_inv, _inflate = _dataset_and_bodies_inv(
-            project, model_name
-        )
+        dataset, _body_inv, _ = load_and_prepare_scan_dataset(cfg)
+        _inflate = lambda x: inflate(x, cfg["features"])
     model = get_model(cfg)
 
     # select session/body for canonical pose space
@@ -266,9 +373,8 @@ def model_withinbody_induced_errs(
     checkpoint = load_fit(project.model(model_name))
     cfg = checkpoint["config"]
     if dataset is None:
-        dataset, _body_inv, _inflate = _dataset_and_bodies_inv(
-            project, model_name
-        )
+        dataset, _body_inv, _ = load_and_prepare_scan_dataset(cfg)
+        _inflate = lambda x: inflate(x, cfg["features"])
     model = get_model(cfg)
 
     induced_kpts = induced_reference_keypoints(
@@ -307,7 +413,10 @@ def withinbody_reconst_errs(project, scan_name, progress=False):
         models = list(scan_cfg["models"].keys())
     else:
         models = scan_name
-    dataset, _body_inv, _inflate = _dataset_and_bodies_inv(project, models[0])
+    dataset, _body_inv, cfg = load_and_prepare_scan_dataset(
+        project, model_name=models[0]
+    )
+    _inflate = lambda x: inflate(x, cfg["features"])
     return {
         model: model_withinbody_reconst_errs(
             project,
@@ -329,7 +438,9 @@ def withinbody_induced_errs(project, scan_name, progress=False):
         models = list(scan_cfg["models"].keys())
     else:
         models = scan_name
-    dataset, _body_inv, _ = _dataset_and_bodies_inv(project, models[0])
+    dataset, _body_inv, _ = load_and_prepare_scan_dataset(
+        project, model_name=models[0]
+    )
     return {
         model: model_withinbody_induced_errs(
             project,
@@ -349,8 +460,8 @@ def withinsession_induced_errs(project, scan_name, progress=False):
         models = list(scan_cfg["models"].keys())
     else:
         models = scan_name
-    dataset, (_body_inv, _session_inv), _ = _dataset_and_bodies_inv(
-        project, models[0], return_session_inv=True
+    dataset, (_body_inv, _session_inv), _ = load_and_prepare_scan_dataset(
+        project, model_name=models[0], return_session_inv=True
     )
     return _body_inv, {
         model: model_withinbody_induced_errs(
@@ -379,7 +490,9 @@ def base_jsds_to_reference(
         model_name is not None or dataset is not None
     ), "Need either `model_name` or `dataset`."
     if dataset is None:
-        dataset, _body_inv, _ = _dataset_and_bodies_inv(project, model_name)
+        dataset, _body_inv, _ = load_and_prepare_scan_dataset(
+            project, model_name=model_name
+        )
         ref_cloud = PointCloudDensity(k=15).fit(
             dataset.get_session(dataset.ref_session)
         )
@@ -411,7 +524,9 @@ def model_jsds_to_reference(
 ):
     cfg = load_model_config(project.model_config(model_name))
     if dataset is None:
-        dataset, _body_inv, _ = _dataset_and_bodies_inv(project, model_name)
+        dataset, _body_inv, _ = load_and_prepare_scan_dataset(
+            project, model_name=model_name
+        )
         ref_cloud = PointCloudDensity(k=15).fit(
             dataset.get_session(dataset.ref_session)
         )
@@ -450,7 +565,9 @@ def jsds_to_reference(project, scan_name, progress=False):
         models = list(scan_cfg["models"].keys())
     else:
         models = scan_name
-    dataset, _body_inv, _ = _dataset_and_bodies_inv(project, models[0])
+    dataset, _body_inv, _ = load_and_prepare_scan_dataset(
+        project, model_name=models[0]
+    )
     ref_cloud = PointCloudDensity(k=15).fit(
         dataset.get_session(dataset.ref_session)
     )

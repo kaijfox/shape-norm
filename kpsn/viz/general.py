@@ -2,50 +2,76 @@ from .styles import colorset
 from ..io.loaders import load_dataset
 from ..io.alignment import align
 from ..io.armature import Armature
-from .util import plot_mouse_views, select_frame_gallery, axes_off, legend, flat_grid
+from ..io.dataset import Dataset
+from .util import (
+    plot_mouse_views,
+    select_frame_gallery,
+    axes_off,
+    legend,
+    flat_grid,
+)
+from ..io.features import inflate
 
 import matplotlib.pyplot as plt
 
-def session_means(config: dict, colors: colorset = None):
+
+def session_means(
+    config: dict, dataset: Dataset = None, colors: colorset = None
+):
     """Plot mean pose for each session.
 
     Parameters
     ----------
     config : dict
         Full project config dictionary.
+    dataset : Dataset
+        Aligned dataset. Note: pre feature extraction.
     """
     if colors is None:
         colors = colorset.active
 
-    dataset = load_dataset(config["dataset"])
-    dataset, align_inverse = align(dataset, config["alignment"])
-    fig, ax = flat_grid(
-        dataset.n_sessions, min(dataset.n_sessions, 10), ax_size=(1.5, 1.5)
+    if dataset is None:
+        dataset = load_dataset(config["dataset"])
+        dataset, align_inverse = align(dataset, config["alignment"])
+    fig, ax, ax_grid = flat_grid(
+        2 * dataset.n_sessions,
+        min(2 * dataset.n_sessions, 10),
+        ax_size=(1.5, 1.5),
     )
 
     for i, session in enumerate(dataset.sessions):
+        k = i * 2
         plot_mouse_views(
-            ax[:, i],
+            ax[k : k + 2],
             dataset.get_session(session).mean(axis=0),
             Armature.from_config(config["dataset"]),
             color=colors.neutral,
-            specialkp=None,
         )
-        ax[0, i].set_title(session)
+        ax[k].set_aspect("equal")
+        ax[k].set_title(session)
 
     axes_off(ax)
     fig.suptitle("Subject mean poses")
     return fig
 
 
-def pose_gallery(config: dict, colors: colorset = None):
+def pose_gallery(
+    config: dict, dataset: Dataset = None, colors: colorset = None
+):
     """Plot gallery of poses for each session from the dataset described in
-    config."""
+    config.
+
+    Parameters
+    ----------
+    dataset : Dataset
+        Aligned dataset. Note: pre feature extraction.
+    """
     if colors is None:
         colors = colorset.active
 
-    dataset = load_dataset(config["dataset"])
-    dataset, align_inverse = align(dataset, config["alignment"])
+    if dataset is None:
+        dataset = load_dataset(config["dataset"])
+        dataset, align_inverse = align(dataset, config["alignment"])
     arm = Armature.from_config(config["dataset"])
     fig = None
 

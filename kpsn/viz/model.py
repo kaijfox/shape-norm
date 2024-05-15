@@ -18,16 +18,15 @@ from .videos import (
     write_video,
 )
 from ..io.utils import stack_dict
+from ..io.dataset import Dataset
 from ..models.morph.lowrank_affine import LRAParams, model as lra_model
 from ..models.morph.bone_length import BLSParams, model as bls_model
 from .styles import colorset
-from ..io.loaders import load_dataset
-from ..fitting.methods import load_and_prepare_dataset, load_fit
 from ..io.armature import Armature
+from ..fitting.methods import load_and_prepare_dataset
 from ..models.util import apply_bodies, _optional_pbar
 from ..io.features import inflate
 from ..project.paths import Project
-from ..config import load_model_config
 from ..models.instantiation import get_model
 from ..fitting.scans import merge_param_hist_with_hyperparams
 
@@ -41,13 +40,18 @@ import seaborn as sns
 import cv2
 
 
-def report_plots(checkpoint, n_col=5, first_step = 0, colors: colorset = None):
+def report_plots(checkpoint, n_col=5, first_step=0, colors: colorset = None):
     if colors is None:
         colors = colorset.active
     reports: ArrayTrace = checkpoint["meta"]["reports"]
     n_row = int(jnp.ceil(reports.n_leaves() / n_col))
     fig, ax = plt.subplots(n_row, n_col, figsize=(3 * n_col, 2 * n_row))
-    reports.plot(ax.ravel()[: reports.n_leaves()], color=colors.neutral, lw=1, first_step=first_step)
+    reports.plot(
+        ax.ravel()[: reports.n_leaves()],
+        color=colors.neutral,
+        lw=1,
+        first_step=first_step,
+    )
     for a in ax.ravel()[reports.n_leaves() :]:
         a.set_axis_off()
     sns.despine()
@@ -118,6 +122,7 @@ def em_loss(checkpoint, mstep_relative=True, colors: colorset = None):
 
 def lra_centroid_and_modes(
     checkpoint: dict,
+    dataset: Dataset = None,
     colors: colorset = None,
     progress=False,
     body_whitelist=None,
@@ -127,7 +132,8 @@ def lra_centroid_and_modes(
     if colors is None:
         colors = colorset.active
     config = checkpoint["config"]
-    dataset, _ = load_and_prepare_dataset(config)
+    if dataset is None:
+        dataset, _ = load_and_prepare_dataset(config)
     armature = Armature.from_config(config["dataset"])
     bodies = dataset.bodies if body_whitelist is None else body_whitelist
 
@@ -196,13 +202,19 @@ def lra_centroid_and_modes(
 
 
 def lra_param_convergence(
-    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False, first_step=0,
+    checkpoint: dict,
+    dataset: Dataset = None,
+    colors: colorset = None,
+    stepsize=1,
+    progress=False,
+    first_step=0,
 ):
     if colors is None:
         colors = colorset.active
 
     cfg = _insert_calibration_data_to_checkpoint_config(checkpoint)
-    _dataset, _ = load_and_prepare_dataset(cfg)
+    if dataset is None:
+        dataset, _ = load_and_prepare_dataset(cfg)
     model = get_model(cfg)
     param_hist = merge_param_hist_with_hyperparams(
         model, checkpoint["params"], checkpoint["meta"]["param_hist"]
@@ -244,10 +256,12 @@ def lra_param_convergence(
                 lw=0.5,
                 label=[i_body] + [None] * (upds.shape[-1] - 1),
             )
-            ax[0, i_ax].set_title(_dataset._body_names[i_body])
+            ax[0, i_ax].set_title(dataset._body_names[i_body])
             ax[i_mode, 0].set_ylabel(f"pc {i_mode}")
         upds = param_hist.morph.offset_updates[:, i_body, :]
-        ax[-1, i_ax].plot(step, upds[first_step::stepsize], color=pal[i_body], lw=0.5)
+        ax[-1, i_ax].plot(
+            step, upds[first_step::stepsize], color=pal[i_body], lw=0.5
+        )
         i_ax += 1
 
     ax[-1, 0].set_xlabel("iteration [m-steps]")
@@ -256,13 +270,19 @@ def lra_param_convergence(
 
 
 def bls_param_convergence(
-    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False, first_step=0,
+    checkpoint: dict,
+    dataset: Dataset = None,
+    colors: colorset = None,
+    stepsize=1,
+    progress=False,
+    first_step=0,
 ):
     if colors is None:
         colors = colorset.active
 
     cfg = _insert_calibration_data_to_checkpoint_config(checkpoint)
-    _dataset, _ = load_and_prepare_dataset(cfg)
+    if dataset is None:
+        dataset, _ = load_and_prepare_dataset(cfg)
     model = get_model(cfg)
     param_hist: BLSParams = merge_param_hist_with_hyperparams(
         model, checkpoint["params"], checkpoint["meta"]["param_hist"]
@@ -305,7 +325,7 @@ def bls_param_convergence(
                 lw=0.5,
                 label=i_body,
             )
-            ax[0, i_ax].set_title(_dataset._body_names[i_body])
+            ax[0, i_ax].set_title(dataset._body_names[i_body])
             ax[i_bone, 0].set_ylabel(
                 arms.keypoint_names[int(arms.bones[i_bone, 0])]
             )
@@ -316,12 +336,18 @@ def bls_param_convergence(
 
 
 def gmm_param_convergence(
-    checkpoint: dict, colors: colorset = None, stepsize=1, progress=False, first_step=0,
+    checkpoint: dict,
+    dataset: Dataset = None,
+    colors: colorset = None,
+    stepsize=1,
+    progress=False,
+    first_step=0,
 ):
     if colors is None:
         colors = colorset.active
     cfg = _insert_calibration_data_to_checkpoint_config(checkpoint)
-    _dataset, _ = load_and_prepare_dataset(cfg)
+    if dataset is None:
+        dataset, _ = load_and_prepare_dataset(cfg)
     model = get_model(cfg)
     param_hist = merge_param_hist_with_hyperparams(
         model, checkpoint["params"], checkpoint["meta"]["param_hist"]
@@ -350,7 +376,7 @@ def gmm_param_convergence(
                 step, weights[first_step::stepsize, i_sess], color=pal[i_sess]
             )
             ax[i_comp, i_sess].set_ylim(0, param_hist.pose.subj_weights.max())
-            ax[0, i_sess].set_title(_dataset._session_names[i_sess])
+            ax[0, i_sess].set_title(dataset._session_names[i_sess])
         ax[i_comp, -1].plot(
             step, means[first_step::stepsize], color=colors.neutral, lw=0.5
         )
@@ -360,14 +386,17 @@ def gmm_param_convergence(
     return fig
 
 
-def gmm_components(checkpoint: dict, colors: colorset = None):
+def gmm_components(
+    checkpoint: dict, dataset: Dataset = None, colors: colorset = None
+):
     """Component means and weights of a GMM model."""
     if colors is None:
         colors = colorset.active
 
     cfg = checkpoint["config"]
     arm = Armature.from_config(cfg["dataset"])
-    dataset, _ = load_and_prepare_dataset(cfg)
+    if dataset is None:
+        dataset, _ = load_and_prepare_dataset(cfg)
     _inflate = lambda arr: inflate(arr, cfg["features"])
     params = checkpoint["params"].pose
 
@@ -425,6 +454,7 @@ def _insert_calibration_data_to_checkpoint_config(checkpoint):
 def compare_nearest_frames(
     output_path: Path,
     checkpoint: dict,
+    dataset: Dataset = None,
     colors: colorset = None,
     group_lines=False,
 ):
@@ -438,7 +468,8 @@ def compare_nearest_frames(
     params: LRAParams = checkpoint["params"].morph
     config = _insert_calibration_data_to_checkpoint_config(checkpoint)
     model = get_model(config)
-    dataset, _ = load_and_prepare_dataset(config)
+    if dataset is None:
+        dataset, _ = load_and_prepare_dataset(config)
     _inflate = lambda arr: inflate(arr, config["features"])
     aligned = _inflate(dataset)
     armature = Armature.from_config(config["dataset"])
@@ -542,6 +573,7 @@ def display_clip_across_bodies(
     start,
     end,
     window_size,
+    dataset: Dataset = None,
     source_session=None,
     n_cols=3,
     fixed_crop=False,
@@ -560,7 +592,8 @@ def display_clip_across_bodies(
     params: LRAParams = checkpoint["params"].morph
     config = _insert_calibration_data_to_checkpoint_config(checkpoint)
     model = get_model(config)
-    dataset, _ = load_and_prepare_dataset(config, allow_subsample=False)
+    if dataset is None:
+        dataset, _ = load_and_prepare_dataset(config, allow_subsample=False)
     _inflate = lambda arr: inflate(arr, config["features"])
     armature = Armature.from_config(config["dataset"])
 

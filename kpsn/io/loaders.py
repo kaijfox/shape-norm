@@ -73,15 +73,9 @@ def _get_root_path(paths: dict):
 
 def _session_file_config(
     filepaths,
-    keypoint_names,
     ref_session,
-    use_keypoints=None,
-    exclude_keypoints=None,
-    keypoint_parents=None,
-    anterior=None,
-    posterior=None,
-    invert_axes=None,
     bodies=None,
+    keypoint_names=None,
 ):
     """Generate common config for datasets based on one session / file.
 
@@ -94,14 +88,38 @@ def _session_file_config(
     """
 
     root, filepaths = _find_files(filepaths, ".npy")
+    bodies = {n: None for n in filepaths} if bodies is None else bodies
 
     if callable(keypoint_names):
         keypoint_names = keypoint_names(
             os.path.join(root, list(filepaths.values())[0])
         )
 
-    # Process other args: bodies, use/exclude_keypoints, skeleton
-    bodies = {n: None for n in filepaths} if bodies is None else bodies
+    return (
+        dict(
+            root_path=root,
+            ref_session=ref_session,
+            sessions={
+                sess_name: dict(path=fp, body=bodies[sess_name])
+                for sess_name, fp in filepaths.items()
+            },
+        ),
+        keypoint_names,
+    )
+
+
+def _keypoint_names_config(
+    keypoint_names,
+    use_keypoints=None,
+    exclude_keypoints=None,
+    keypoint_parents=None,
+    anterior=None,
+    posterior=None,
+    invert_axes=None,
+):
+    """Generate common dataset config components for keypoint data."""
+
+    # use/exclude_keypoints
     if use_keypoints is None:
         if exclude_keypoints is None:
             use_keypoints = keypoint_names
@@ -109,16 +127,11 @@ def _session_file_config(
             use_keypoints = [
                 kp for kp in keypoint_names if kp not in exclude_keypoints
             ]
+    # armature as dictionary
     if not isinstance(keypoint_parents, dict):
         keypoint_parents = dict(zip(use_keypoints, keypoint_parents))
 
     return dict(
-        root_path=root,
-        ref_session=ref_session,
-        sessions={
-            sess_name: dict(path=fp, body=bodies[sess_name])
-            for sess_name, fp in filepaths.items()
-        },
         keypoint_names=keypoint_names,
         use_keypoints=use_keypoints,
         anterior=anterior,
@@ -130,6 +143,39 @@ def _session_file_config(
         ),
         viz=dict(armature=keypoint_parents),
     )
+
+
+def _extract_keypoints_from_array(
+    keypoint_array,
+    keypoint_names,
+    use_keypoints,
+    invert_axes,
+    subsample,
+    allow_subsample=True,
+    session_name_for_error=None,
+):
+    data_arr = keypoint_array
+    kpt_ixs = select_keypt_ixs(keypoint_names, use_keypoints)
+
+    if data_arr.shape[1] != len(keypoint_names):
+        logging.error(
+            f"SEVERE: loaded {data_arr.shape[1]} keypoints, but "
+            f"expected {len(keypoint_names)}"
+            + (
+                f" from {session_name_for_error}."
+                if session_name_for_error
+                else "."
+            )
+        )
+    data_arr = data_arr[:, kpt_ixs]
+    if invert_axes is not None:
+        inv_ix = invert_axes
+        data_arr[:, :, inv_ix] = -data_arr[:, :, inv_ix]
+
+    if subsample is not None and allow_subsample:
+        data_arr = data_arr[::subsample]
+
+    return data_arr
 
 
 class DatasetLoader(object):
@@ -179,32 +225,30 @@ class DatasetLoader(object):
             return save_config(project.main_config(), full_cfg)
 
     @classmethod
-    def from_arrays(cls, data, config):
+    def from_arrays(cls, data, config, meta_only=False, allow_subsample=True):
         cls._validate_config(config)
 
         # setup
         data_arranged = {}
         bodies = {}
-        kpt_ixs = select_keypt_ixs(
-            config["keypoint_names"], config["use_keypoints"]
-        )
 
         # load data and assign a body name to each session
         for sess, sess_meta in config["sessions"].items():
-            data_path = os.path.join(config["root_path"], sess_meta["path"])
-            data_arr = data[sess]
 
-            if data_arr.shape[1] != len(config["keypoint_names"]):
-                logging.error(
-                    f"SEVERE: recieved {data_arr.shape[1]} keypoints from '{sess}'"
-                    f", but expected {len(config['keypoint_names'])}."
+            if not meta_only:
+                data_arranged[sess] = _extract_keypoints_from_array(
+                    data[sess],
+                    config["keypoint_names"],
+                    config["use_keypoints"],
+                    config["invert_axes"],
+                    config["subsample"],
+                    allow_subsample,
+                    sess,
                 )
-            data_arr = data_arr[:, kpt_ixs]
-            if config["invert_axes"] is not None:
-                inv_ix = config["invert_axes"]
-                data_arr[:, :, inv_ix] = -data_arr[:, :, inv_ix]
-
-            data_arranged[sess] = data_arr
+            else:
+                data_arranged[sess] = np.empty(
+                    (0, len(config["use_keypoints"]), 0)
+                )
 
             if sess_meta["body"] is None:
                 bodies[sess] = f"body-{sess}"
@@ -238,32 +282,23 @@ class DatasetLoader(object):
         # setup
         data = {}
         bodies = {}
-        kpt_ixs = select_keypt_ixs(
-            config["keypoint_names"], config["use_keypoints"]
-        )
 
         # load data and assign a body name to each session
         for sess, sess_meta in config["sessions"].items():
             data_path = os.path.join(config["root_path"], sess_meta["path"])
 
             if not meta_only:
-                data_arr = cls._load_keypoint_array(data_path, config)
-                if data_arr.shape[1] != len(config["keypoint_names"]):
-                    logging.error(
-                        f"SEVERE: loaded {data_arr.shape[1]} keypoints, but "
-                        f"expected {len(config['keypoint_names'])} from {data_path}."
-                    )
-                data_arr = data_arr[:, kpt_ixs]
-                if config["invert_axes"] is not None:
-                    inv_ix = config["invert_axes"]
-                    data_arr[:, :, inv_ix] = -data_arr[:, :, inv_ix]
-
+                data[sess] = _extract_keypoints_from_array(
+                    cls._load_keypoint_array(data_path, config),
+                    config["keypoint_names"],
+                    config["use_keypoints"],
+                    config["invert_axes"],
+                    config["subsample"],
+                    allow_subsample,
+                    sess,
+                )
             else:
-                data_arr = np.empty((0, len(kpt_ixs), 0))
-
-            if config["subsample"] is not None and allow_subsample:
-                data_arr = data_arr[:: config["subsample"]]
-            data[sess] = data_arr
+                data[sess] = np.empty((0, len(config["use_keypoints"]), 0))
 
             if sess_meta["body"] is None:
                 bodies[sess] = f"body-{sess}"
@@ -372,22 +407,27 @@ class raw_npy(DatasetLoader):
             Feature reduction method to use. If None, will use 'locked_pts'.
         """
 
+        # form session file data
+        session_detail, found_kp_names = _session_file_config(
+            filepaths, ref_session, bodies, keypoint_names
+        )
+        keypoint_names = found_kp_names or keypoint_names
+        keypoint_detail = _keypoint_names_config(
+            keypoint_names,
+            use_keypoints,
+            exclude_keypoints,
+            keypoint_parents,
+            anterior,
+            posterior,
+            invert_axes,
+        )
+
         # Form dataset-specific config
         dataset_detail = dict(
             type="raw_npy",
             subsample=subsample,
-            **_session_file_config(
-                filepaths,
-                keypoint_names,
-                ref_session,
-                use_keypoints,
-                exclude_keypoints,
-                keypoint_parents,
-                anterior,
-                posterior,
-                invert_axes,
-                bodies,
-            ),
+            **session_detail,
+            **keypoint_detail,
         )
 
         # Write project config, including alignment and feature defaults
@@ -398,6 +438,113 @@ class raw_npy(DatasetLoader):
     @staticmethod
     def _validate_config(config):
         DatasetLoader._validate_config(config)
+
+    default_alignment = sagittal
+    default_features = locked_pts
+
+
+class arrays(DatasetLoader):
+    """Collection of numpy array files containing keypoint data."""
+
+    type_name = "arrays"
+
+    @staticmethod
+    def _load_keypoint_array(path, config):
+        """Load a keypoint array from a .npy file."""
+        raise NotImplementedError(
+            "Dataset loading not supported for dataset"
+            "type 'arrays'. Please instantiate a Dataset instance directly."
+        )
+
+    @classmethod
+    def load(cls, config, meta_only=False, allow_subsample=True):
+        raise NotImplementedError(
+            "Dataset loading not supported for dataset"
+            "type 'arrays'. Please instantiate a Dataset instance directly."
+        )
+
+    @classmethod
+    def setup_project_config(
+        cls,
+        project,
+        session_names,
+        keypoint_names,
+        ref_session,
+        use_keypoints=None,
+        exclude_keypoints=None,
+        keypoint_parents=None,
+        bodies=None,
+        anterior=None,
+        posterior=None,
+        invert_axes=None,
+        subsample=None,
+        alignment_type=None,
+        feature_type=None,
+    ):
+        """Set up a project config for a arrays dataset.
+
+        Parameters
+        ----------
+        project : kpsn.Project
+        session_names : list of str
+            Names of the sessions that will be provided in the dataset.
+        keypoint_names : list of str
+            Ordered list of keypoint names as appearing in the .npy files.
+        ref_session : str
+            Name of session to use as reference, whose poses should be treated
+            as canoncial.
+        use_keypoints : list of str, default None
+            List of keypoint names to include, or None to use all keypoints.
+        exclude_keypoints : list of str, default None
+            List of keypoint names to exclude, or None to use all keypoints. If
+            `use_keypoints` is passed, this is ignored.
+        keypoint_parents : dict[str, Optional[str, None]]
+            Mapping of keypoint names to their parent keypoint names, or None
+            to indicate no parent, i.e. the root keypoint.
+        bodies : list of Union[str, NoneType], default None
+            List of body ids to assign to each session, or None to assign
+            unique body to each session. Entries may be None to assign unique
+            bodies to specific sessions.
+        subsample : int, default None
+            Reduce frame rate by taking every `subsample`th frame.
+        alignment_type : str, default None
+            Alignment method to use. If None, will use 'sagittal'.
+        feature_type : str, default None
+            Feature reduction method to use. If None, will use 'locked_pts'.
+        """
+
+        # form session file data
+        bodies = {n: None for n in session_names} if bodies is None else bodies
+        session_detail = dict(
+            ref_session=ref_session,
+            sessions={s: dict(body=bodies[s]) for s in session_names},
+        )
+        keypoint_detail = _keypoint_names_config(
+            keypoint_names,
+            use_keypoints,
+            exclude_keypoints,
+            keypoint_parents,
+            anterior,
+            posterior,
+            invert_axes,
+        )
+
+        # Form dataset-specific config
+        dataset_detail = dict(
+            type="arrays",
+            subsample=subsample,
+            **session_detail,
+            **keypoint_detail,
+        )
+
+        # Write project config, including alignment and feature defaults
+        return cls._write_project_config(
+            project, dataset_detail, alignment_type, feature_type
+        )
+
+    @staticmethod
+    def _validate_config(config):
+        return True
 
     default_alignment = sagittal
     default_features = locked_pts
@@ -479,6 +626,7 @@ class h5(DatasetLoader):
 dataset_types = {
     raw_npy.type_name: raw_npy,
     h5.type_name: h5,
+    arrays.type_name: arrays,
 }
 
 

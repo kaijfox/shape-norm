@@ -397,6 +397,10 @@ class Dataset:
     def n_bodies(self):
         return len(self.bodies)
 
+    @property
+    def ndim(self):
+        return self.data.ndim - 1
+
     def get_slice(self, session: Union[str, int]) -> slice:
         if isinstance(session, str):
             session = self.session_meta.session_id(session)

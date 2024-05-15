@@ -229,6 +229,7 @@ fit_types = {
 
 def fit(
     model_dir: Path,
+    dataset: Dataset = None,
     checkpoint_every: int = 10,
     log_every: int = -1,
     progress: bool = False,
@@ -245,6 +246,8 @@ def fit(
     ----------
     model_dir : Path
         Path to model directory.
+    dataset : Dataset
+        Aligned, modified, and reature-reduced dataset.
     checkpoint_every : int
         Number of iterations between checkpoints.
     log_every : int
@@ -268,7 +271,8 @@ def fit(
 
     # load config/dataset and run preprocessing
     config = load_model_config(model_dir / "model.yml")
-    dataset, align_inv = load_and_prepare_dataset(config)
+    if dataset is None:
+        dataset, align_inv = load_and_prepare_dataset(config)
     model = get_model(config)
 
     fit_type = config["fit"]["type"]
@@ -281,7 +285,6 @@ def fit(
         dataset,
         config,
         checkpoint_extra=dict(
-            align_inverse=align_inv,
             config=config,
         ),
         checkpoint_every=checkpoint_every,
@@ -340,9 +343,8 @@ def load_and_prepare_dataset(
     return prepare_dataset(dataset, config, modify, all_versions)
 
 
-def modify_dataset(model_dir: Path, dataset):
+def modify_dataset(dataset: Dataset, config: dict):
     """Modify a base dataset according to the fit method."""
-    config = load_model_config(model_dir / "model.yml")
     fit_type = config["fit"]["type"]
     if fit_type not in fit_types:
         raise ValueError(f"Unknown fit type {fit_type}")

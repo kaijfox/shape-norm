@@ -29,7 +29,6 @@ from .util import (
 from ..io.utils import stack_dict
 from ..models.morph.lowrank_affine import LRAParams, model as lra_model
 from .styles import colorset
-from ..io.loaders import load_dataset
 from ..fitting.methods import load_and_prepare_dataset, load_fit
 from ..io.armature import Armature
 from ..models.util import apply_bodies, _optional_pbar
