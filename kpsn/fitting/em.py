@@ -92,9 +92,27 @@ def _load_checkpoint(filepath, model: JointModel = None, config: dict = None):
         Full config dictionary. One of model or config must be provided.
     """
     raw = jl.load(str(filepath))
+    return _deserialize_checkpoint(raw, model, config)
+
+
+def _deserialize_checkpoint(
+    serialized: dict, model: JointModel = None, config: dict = None
+):
+    """
+    Deserialize a checkpoint dictionary.
+
+    Parameters
+    ----------
+    ckpt_dict : dict
+    model : JointModel
+    config : dict
+    """
+    raw = serialized
+
     # old checkpoints have params as a JointModelParams object
     if isinstance(raw["params"], JointModelParams):
         return raw
+
     # new checkpoints have params and param_hist as dicts
     if model is None:
         if config is None:
@@ -104,8 +122,9 @@ def _load_checkpoint(filepath, model: JointModel = None, config: dict = None):
         model.pose.ParamClass(raw["params"]["pose"]),
         model.morph.ParamClass(raw["params"]["morph"]),
     )
+    _tree = raw["meta"]["param_hist"]["arrays"]
     raw["meta"]["param_hist"] = ArrayTrace(raw["meta"]["param_hist"]["n_steps"])
-    raw["meta"]["param_hist"]._tree = raw["meta"]["param_hist"]["arrays"]
+    raw["meta"]["param_hist"]._tree = _tree
     return raw
 
 

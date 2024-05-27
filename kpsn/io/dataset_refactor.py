@@ -130,6 +130,11 @@ class StackedArrayMetadata:
             self._slices = dict(serialized["slices"])
             self._length = serialized["length"]
             self._stack_session_ids = None
+            # slices may be passed as actual slices or the desired tuple format
+            self._slices = {
+                s: ((slc.start, slc.stop) if isinstance(slc, slice) else slc)
+                for s, slc in self._slices.items()
+            }
         else:
             self._slices = serialized._slices
             self._length = serialized._length

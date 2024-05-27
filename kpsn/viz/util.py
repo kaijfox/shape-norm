@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mpl_ticks
 import matplotlib.colors as mpl_color
 from contextlib import contextmanager
+from matplotlib.collections import LineCollection
 import logging
 import math
 
@@ -543,12 +544,12 @@ def grouped_stripplot(
                 ax.plot(
                     strip_x + ofs,
                     strip_y,
-                    **{**dict(ls="-", marker = '', color=c), **connection_kw},
+                    **{**dict(ls="-", marker="", color=c), **connection_kw},
                 )
             ax.plot(
                 strip_x + ofs,
                 strip_y,
-                **{**dict(ls="", marker = 'o', color=c), **points_kw},
+                **{**dict(ls="", marker="o", color=c), **points_kw},
             )
 
         # symmetrize errorbars if only one value is provided by `error`
@@ -927,12 +928,11 @@ def __grouped_violins(arrs, ofs, x, color, label, ax, **kws):
                 else:
                     c = color
                 ax.plot(
-                    jitter_points(np.full_like(arr, x_), scale=point_jitter) + ofs,
+                    jitter_points(np.full_like(arr, x_), scale=point_jitter)
+                    + ofs,
                     arr,
-                    **{**dict(color = c, ls = '', marker = 'o'), **points_kw},
+                    **{**dict(color=c, ls="", marker="o"), **points_kw},
                 )
-
-            
 
         if errorbar:
             ax.errorbar(
@@ -1092,3 +1092,33 @@ def stem_bar(y, center, as_kw=True):
     if as_kw:
         return dict(height=height, bottom=bottom)
     return height, bottom
+
+
+def stack_lines(xs, ys, cs, **kws):
+    # Ensure xs, ys, and cs are numpy arrays
+    # Check that the lengths of xs, ys, and cs are the same
+    if len(xs) != len(ys) or len(xs) != len(cs):
+        raise ValueError("xs, ys, and cs must have the same length")
+
+    # Find the maximum length among xs and ys
+    max_len = np.max([len(x) for x in xs] + [len(y) for y in ys])
+    pad_kw = dict(mode="constant", constant_values=np.nan)
+    # Pad xs and ys with nans at the end to make them the same length
+    xs = [
+        np.pad(
+            x, (0, max_len - len(x)), **pad_kw
+        )
+        for x in xs
+    ]
+    ys = [
+        np.pad(
+            y, (0, max_len - len(y)), **pad_kw
+        )
+        for y in ys
+    ]
+
+    # Create a list of (x, y) points for each pair of xs and ys
+    points = [np.column_stack([x, y]) for x, y in zip(xs, ys)]
+    # Create a LineCollection from the points, with colors specified by cs
+    line_collection = LineCollection(points, colors=cs, **kws)
+    return line_collection

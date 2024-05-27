@@ -119,9 +119,6 @@ class JointModelParams(object):
 
     @staticmethod
     def from_types(model: JointModel, static: dict, hyper: dict, trained: dict):
-        morph_params = model.morph.ParamClass.from_types(
-            static[1], hyper[1], trained[1]
-        )
         return JointModelParams(
             model.pose.ParamClass.from_types(static[0], hyper[0], trained[0]),
             model.morph.ParamClass.from_types(static[1], hyper[1], trained[1]),

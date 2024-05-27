@@ -66,12 +66,19 @@ def _vertical_lineplot(data, colors: colorset = None, labels=None):
 
 
 def withinbody_induced_errs(
-    project, scan_name, colors: colorset = None, progress=False
+    project,
+    scan_name,
+    dataset=None,
+    split_meta=None,
+    colors: colorset = None,
+    progress=False,
 ):
     if colors is None:
         colors = colorset.active
 
-    errs = _withinbody_induced_errs(project, scan_name, progress=progress)
+    errs = _withinbody_induced_errs(
+        project, scan_name, dataset, split_meta, progress=progress
+    )
 
     models = sorted(list(errs.keys()))
     bodies = errs[models[0]].keys()
@@ -105,13 +112,18 @@ def withinbody_induced_errs(
 
 
 def withinsession_induced_errors(
-    project, scan_name, colors: colorset = None, progress=False
+    project,
+    scan_name,
+    dataset=None,
+    split_meta=None,
+    colors: colorset = None,
+    progress=False,
 ):
     if colors is None:
         colors = colorset.active
 
     _body_inv, errs = _withinsession_induced_errs(
-        project, scan_name, progress=progress
+        project, scan_name, dataset, split_meta, progress=progress
     )
 
     models = sorted(list(errs.keys()))
@@ -136,6 +148,8 @@ def withinsession_induced_errors(
 def jsds_to_reference(
     project,
     scan_name,
+    dataset=None,
+    split_meta=None,
     colors: colorset = None,
     progress=False,
     data_only=False,
@@ -146,7 +160,11 @@ def jsds_to_reference(
 
     if with_data is None:
         jsds, base_jsds, dataset = _jsds_to_reference(
-            project, scan_name, progress=progress
+            project,
+            scan_name,
+            dataset,
+            split_meta,
+            progress=progress,
         )
         if data_only:
             return jsds, base_jsds, dataset
@@ -154,7 +172,11 @@ def jsds_to_reference(
         jsds, base_jsds, dataset = with_data
     models = sorted(list(jsds.keys()))
     bodies = jsds[models[0]].keys()
-    ref_body = [b for b in base_jsds if dataset.ref_session in base_jsds[b]][0]
+    ref_body = [
+        b
+        for b in base_jsds
+        if dataset.session_name(dataset.ref_session) in base_jsds[b]
+    ][0]
 
     # labels and aesthetics
     base_ref_label = lambda i: (

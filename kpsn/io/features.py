@@ -7,6 +7,7 @@ from ..io import armature
 import jax.numpy as jnp
 import jax.random as jr
 import jax.numpy.linalg as jla
+from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import logging
 
@@ -256,6 +257,9 @@ class pcs(reducer):
 
         # fit PCA
         pcs = fit_with_center(flat_data)
+        # MAX_COMPONENTS = 20
+        # pcs = PCA(n_components=MAX_COMPONENTS)
+        # coords = pcs.fit_transform()
 
         # -- choose number of dimensions in reduced data
         scree = (

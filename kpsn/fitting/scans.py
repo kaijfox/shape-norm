@@ -392,9 +392,9 @@ def model_withinbody_induced_errs(
         # Now map sessions in _body_inv[b] to their (post-split) body name
         # Also separate out into a reference session within _body_inv[b] (the
         # first) entry and the other sessions
-        body_ref = dataset.sess_bodies[_body_inv[b][0]]
+        body_ref = dataset.session_body_name(_body_inv[b][0])
         nonref_sessions = _body_inv[b][1:]
-        nonref_bodies = [dataset.sess_bodies[s] for s in nonref_sessions]
+        nonref_bodies = [dataset.session_body_name(s) for s in nonref_sessions]
         # induced_kpts is indexed by (post-split) body names
         # measure errors between the reference session for this (pre-split)
         # body, that is `body_ref` and each of the non-reference sessions
@@ -430,17 +430,36 @@ def withinbody_reconst_errs(project, scan_name, progress=False):
     }
 
 
-def withinbody_induced_errs(project, scan_name, progress=False):
-    """Keypoint errors induced by morphing across examples of the same body for
-    each model in a scan."""
+def _resolve_scan_model_list(project, scan_name):
     if isinstance(scan_name, str):
         scan_cfg = load_config(project.scan(scan_name) / "scan.yml")
-        models = list(scan_cfg["models"].keys())
+        return list(scan_cfg["models"].keys())
+    return scan_name
+
+
+def _load_dataset_or_calc_metadata(
+    project, model_name, dataset=None, split_meta=None
+):
+    # load dataset if not given, or get split metadata if dataset was given
+    if dataset is None:
+        dataset, (_body_inv, _session_inv), _ = load_and_prepare_scan_dataset(
+            project, model_name=model_name, return_session_inv=True
+        )
     else:
-        models = scan_name
-    dataset, _body_inv, _ = load_and_prepare_scan_dataset(
-        project, model_name=models[0]
+        _body_inv, _session_inv = split_meta
+    return dataset, _body_inv, _session_inv
+
+
+def withinbody_induced_errs(
+    project, scan_name, dataset=None, split_meta=None, progress=False
+):
+    """Keypoint errors induced by morphing across examples of the same body for
+    each model in a scan."""
+    models = _resolve_scan_model_list(project, scan_name)
+    dataset, _body_inv, _ = _load_dataset_or_calc_metadata(
+        project, models[0], dataset, split_meta
     )
+
     return {
         model: model_withinbody_induced_errs(
             project,
@@ -452,17 +471,21 @@ def withinbody_induced_errs(project, scan_name, progress=False):
     }
 
 
-def withinsession_induced_errs(project, scan_name, progress=False):
+def withinsession_induced_errs(
+    project, scan_name, dataset=None, split_meta=None, progress=False
+):
     """Keypoint errors induced by morphing across examples of the same session
     for each model in a scan with split_all = True."""
-    if isinstance(scan_name, str):
-        scan_cfg = load_config(project.scan(scan_name) / "scan.yml")
-        models = list(scan_cfg["models"].keys())
-    else:
-        models = scan_name
-    dataset, (_body_inv, _session_inv), _ = load_and_prepare_scan_dataset(
-        project, model_name=models[0], return_session_inv=True
+    models = _resolve_scan_model_list(project, scan_name)
+    # load dataset if not given, or get split metadata if dataset was given
+    dataset, _body_inv, _session_inv = _load_dataset_or_calc_metadata(
+        project,
+        models[0],
+        dataset,
+        split_meta,
     )
+
+    # calculate induced errors for each model
     return _body_inv, {
         model: model_withinbody_induced_errs(
             project,
@@ -520,8 +543,9 @@ def model_jsds_to_reference(
     _body_inv=None,
     ref_cloud=None,
     progress=False,
-    average=True,
 ):
+    """JS discances of each session (after normalization) to the reference
+    session."""
     cfg = load_model_config(project.model_config(model_name))
     if dataset is None:
         dataset, _body_inv, _ = load_and_prepare_scan_dataset(
@@ -533,24 +557,27 @@ def model_jsds_to_reference(
     model = get_model(cfg)
     checkpoint = load_fit(project.model(model_name))
 
+    induced_kpts = induced_reference_keypoints(
+        dataset,
+        cfg,
+        model.morph,
+        checkpoint["params"].morph,
+        to_body=None,  # map to all bodies
+        include_reference=True,
+        return_features=True,
+    )
+
     # transform all sessions to the global reference session's body
     jsds = {}
-    pbar = _optional_pbar(_body_inv, progress)
-    for b in pbar:
-        ref_body = dataset.sess_bodies[dataset.ref_session]
-        subset = dataset.session_subset(_body_inv[b], bad_ref_ok=True)
-        mapped = apply_bodies(
-            model.morph,
-            checkpoint["params"].morph,
-            subset,
-            {s: ref_body for s in _body_inv[b]},
-        )
+    for b in _optional_pbar(_body_inv, progress):
 
         # compute JS distances
         jsds[b] = {
             s: ball_cloud_js(
                 ref_cloud,
-                PointCloudDensity(k=15).fit(mapped.get_session(s)),
+                PointCloudDensity(k=15).fit(
+                    induced_kpts[dataset.session_body_name(s)]
+                ),
             )
             for s in _body_inv[b]
         }
@@ -558,16 +585,18 @@ def model_jsds_to_reference(
     return jsds
 
 
-def jsds_to_reference(project, scan_name, progress=False):
+def jsds_to_reference(
+    project, scan_name, dataset=None, split_meta=None, progress=False
+):
     """JS distances to reference session for each model in a scan."""
-    if isinstance(scan_name, str):
-        scan_cfg = load_config(project.scan(scan_name) / "scan.yml")
-        models = list(scan_cfg["models"].keys())
-    else:
-        models = scan_name
-    dataset, _body_inv, _ = load_and_prepare_scan_dataset(
-        project, model_name=models[0]
+    models = _resolve_scan_model_list(project, scan_name)
+    dataset, _body_inv, _ = _load_dataset_or_calc_metadata(
+        project,
+        models[0],
+        dataset,
+        split_meta,
     )
+
     ref_cloud = PointCloudDensity(k=15).fit(
         dataset.get_session(dataset.ref_session)
     )

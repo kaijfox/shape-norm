@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import logging
 
+
 def palgen(name, skip=None):
     def unbound_make(n=None, **kw):
         if kw.get("as_cmap", False):
@@ -58,6 +59,7 @@ class light_colors(colorset):
 
 
 color_sets = {"vscode_dark": vscode_dark_colors, "default": light_colors}
+colorset.active = light_colors
 
 
 class plot_finalizer(object):
@@ -69,7 +71,15 @@ class plot_finalizer(object):
         self.kws = {"dpi": 300, "bbox_inches": "tight", **kws}
 
     def finalize(
-        self, fig, name, path = None, fmt = None, display=True, tight=True, despine=True, save=True
+        self,
+        fig,
+        name,
+        path=None,
+        fmt=None,
+        display=True,
+        tight=True,
+        despine=True,
+        save=True,
     ):
         if despine:
             for ax in fig.get_axes():
@@ -79,17 +89,21 @@ class plot_finalizer(object):
 
         out_file = None
         if name is not None and (save and self.save or save == "force"):
-            plot_dir = Path(self.plot_dir) if path is None else Path(self.plot_dir) / path
+            plot_dir = (
+                Path(self.plot_dir)
+                if path is None
+                else Path(self.plot_dir) / path
+            )
             fmt = self.fmt if fmt is None else fmt
             if not plot_dir.exists():
                 logging.warn(f"Creating plot directory: {plot_dir}")
                 plot_dir.mkdir(parents=True)
             out_file = Path(plot_dir) / (name + "." + fmt)
             fig.savefig(out_file, **self.kws)
-        
+
         if display:
             plt.show(fig)
-        
+
         return out_file
 
 

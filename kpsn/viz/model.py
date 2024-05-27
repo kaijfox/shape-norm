@@ -8,6 +8,7 @@ from .util import (
     axes_off,
     flat_grid,
     select_frame_gallery,
+    stack_lines,
 )
 from .videos import (
     load_videos,
@@ -18,7 +19,7 @@ from .videos import (
     write_video,
 )
 from ..io.utils import stack_dict
-from ..io.dataset import Dataset
+from ..io.dataset_refactor import Dataset
 from ..models.morph.lowrank_affine import LRAParams, model as lra_model
 from ..models.morph.bone_length import BLSParams, model as bls_model
 from .styles import colorset
@@ -37,6 +38,7 @@ import jax.numpy.linalg as jla
 import matplotlib.pyplot as plt
 from matplotlib import colors as plt_colors
 import seaborn as sns
+import tqdm
 import cv2
 
 
@@ -59,7 +61,9 @@ def report_plots(checkpoint, n_col=5, first_step=0, colors: colorset = None):
     return fig
 
 
-def em_loss(checkpoint, mstep_relative=True, colors: colorset = None):
+def em_loss(
+    checkpoint, mstep_relative=True, colors: colorset = None, progress=True
+):
     if colors is None:
         colors = colorset.active
     loss_hist = checkpoint["meta"]["loss"]
@@ -79,7 +83,8 @@ def em_loss(checkpoint, mstep_relative=True, colors: colorset = None):
     pal = colors.cts(len(mstep_losses))
 
     mstep_lengths = []
-    for i in range(0, len(mstep_losses)):
+    xs, ys, cs = [], [], []
+    for i in _optional_pbar(np.arange(len(mstep_losses)), progress):
         if jnp.any(~jnp.isfinite(mstep_losses[i])):
             curr_loss = mstep_losses[i][
                 : jnp.argmax(~jnp.isfinite(mstep_losses[i]))
@@ -88,6 +93,7 @@ def em_loss(checkpoint, mstep_relative=True, colors: colorset = None):
                 continue
         else:
             curr_loss = mstep_losses[i]
+        curr_loss = np.array(curr_loss)
         mstep_lengths.append(len(curr_loss))
 
         if mstep_relative:
@@ -97,9 +103,12 @@ def em_loss(checkpoint, mstep_relative=True, colors: colorset = None):
         else:
             plot_y = curr_loss
 
-        ax[1].plot(
-            jnp.linspace(0, 1, len(curr_loss)), plot_y, color=pal[i], lw=1
-        )
+        xs.append(np.linspace(0, 1, len(curr_loss)))
+        ys.append(plot_y)
+        cs.append(pal[i])
+
+    lines = stack_lines(xs, ys, cs, lw=1)
+    ax[1].add_artist(lines)
 
     if not mstep_relative:
         ax[1].set_yscale("log")
@@ -256,7 +265,7 @@ def lra_param_convergence(
                 lw=0.5,
                 label=[i_body] + [None] * (upds.shape[-1] - 1),
             )
-            ax[0, i_ax].set_title(dataset._body_names[i_body])
+            ax[0, i_ax].set_title(dataset.body_name(i_body))
             ax[i_mode, 0].set_ylabel(f"pc {i_mode}")
         upds = param_hist.morph.offset_updates[:, i_body, :]
         ax[-1, i_ax].plot(
@@ -325,7 +334,7 @@ def bls_param_convergence(
                 lw=0.5,
                 label=i_body,
             )
-            ax[0, i_ax].set_title(dataset._body_names[i_body])
+            ax[0, i_ax].set_title(dataset.body_name(i_body))
             ax[i_bone, 0].set_ylabel(
                 arms.keypoint_names[int(arms.bones[i_bone, 0])]
             )
@@ -376,7 +385,7 @@ def gmm_param_convergence(
                 step, weights[first_step::stepsize, i_sess], color=pal[i_sess]
             )
             ax[i_comp, i_sess].set_ylim(0, param_hist.pose.subj_weights.max())
-            ax[0, i_sess].set_title(dataset._session_names[i_sess])
+            ax[0, i_sess].set_title(dataset.session_name(i_sess))
         ax[i_comp, -1].plot(
             step, means[first_step::stepsize], color=colors.neutral, lw=0.5
         )
@@ -420,7 +429,7 @@ def gmm_components(
         [
             (
                 "(ref) "
-                if dataset._session_names[i] == dataset.ref_session
+                if dataset.session_name(i) == dataset.ref_session
                 else ""
             )
             + dataset._session_names[i]

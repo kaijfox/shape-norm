@@ -130,6 +130,10 @@ def _keypoint_names_config(
     # armature as dictionary
     if not isinstance(keypoint_parents, dict):
         keypoint_parents = dict(zip(use_keypoints, keypoint_parents))
+    else:
+        keypoint_parents = {
+            c: p for c, p in keypoint_parents.items() if c in use_keypoints
+        }
 
     return dict(
         keypoint_names=keypoint_names,
@@ -173,7 +177,6 @@ def _extract_keypoints_from_array(
         inv_ix = invert_axes
         data_arr[:, :, inv_ix] = -data_arr[:, :, inv_ix]
 
-    print("[loaders] presub", data_arr.shape[0])
     if allow_subsample:
         if subsample_to is not None:
             N = data_arr.shape[0]
@@ -189,7 +192,6 @@ def _extract_keypoints_from_array(
                 )
         elif subsample is not None:
             data_arr = data_arr[::subsample]
-    print("[loaders] postsub", data_arr.shape[0])
 
     return data_arr
 
