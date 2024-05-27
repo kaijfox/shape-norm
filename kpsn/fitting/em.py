@@ -53,6 +53,18 @@ def _pytree_sum(tree):
     return pt.tree_reduce(lambda x, y: x.sum() + y.sum(), tree)
 
 
+def _pytree_to_numpy(tree):
+    return pt.tree_map(
+        lambda x: np.array(x) if isinstance(x, jnp.ndarray) else x, tree
+    )
+
+
+def _pytree_to_jax(tree):
+    return pt.tree_map(
+        lambda x: jnp.array(x) if isinstance(x, np.ndarray) else x, tree
+    )
+
+
 def _save_checkpoint(save_dir, contents):
     if save_dir is None:
         return
@@ -76,7 +88,7 @@ def _save_checkpoint(save_dir, contents):
             },
         },
     }
-    jl.dump(contents, checkpoint_file)
+    jl.dump(_pytree_to_numpy(contents), checkpoint_file)
     return contents
 
 
@@ -92,7 +104,7 @@ def _load_checkpoint(filepath, model: JointModel = None, config: dict = None):
         Full config dictionary. One of model or config must be provided.
     """
     raw = jl.load(str(filepath))
-    return _deserialize_checkpoint(raw, model, config)
+    return _deserialize_checkpoint(_pytree_to_jax(raw), model, config)
 
 
 def _deserialize_checkpoint(
