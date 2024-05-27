@@ -187,16 +187,18 @@ def find_nearest_frames(query, library, return_ixs=False):
     return library[selected_ixs]
 
 
-def axes_off(ax):
+def axes_off(ax, y = True, x = True):
     # run on each axis if an array of axes
     if hasattr(ax, "__len__"):
         for a in np.array(ax).ravel():
-            axes_off(a)
+            axes_off(a, y, x)
         return
     # remove ticks and axes
-    ax.set_xticks([])
-    ax.set_yticks([])
-    sns.despine(ax=ax, left=True, bottom=True)
+    if x:
+        ax.set_xticks([])
+    if y:
+        ax.set_yticks([])
+    sns.despine(ax=ax, left=y, bottom=x)
 
 
 def legend(ax, handles_labels=None, **kw):
@@ -215,6 +217,12 @@ def legend(ax, handles_labels=None, **kw):
         )
     else:
         return ax.legend(**kw)
+
+
+def max_bounds(ax):
+    vmin = np.min([ax.get_xlim()[0], ax.get_ylim()[0]])
+    vmax = np.max([ax.get_xlim()[1], ax.get_ylim()[1]])
+    return [vmin, vmax], [vmin, vmax]
 
 
 def nticks(ax, n=2, x=True, y=True):
@@ -461,6 +469,7 @@ def grouped_stripplot(
     error=np.nanstd,
     errorbar=True,
     connect=False,
+    legend=True,
     ax=None,
     errorbar_kw={},
     points_kw={},
@@ -565,7 +574,7 @@ def grouped_stripplot(
                 **errorbar_kw,
             )
 
-    if labels is not None:
+    if labels is not None and legend:
         ax.legend(**legend_kw)
     if xticks is not False:
         ax.set_xticks(x)
@@ -703,6 +712,7 @@ def _grouped_plot(
     colors=None,
     xticks=None,
     vlines=False,
+    legend=True,
     offset=True,
     lim_buffer=None,
     ax=None,
@@ -761,7 +771,7 @@ def _grouped_plot(
 
         func(data[grp], ofs, x, grp_color, label, ax, **kws)
 
-    if labels is not None:
+    if labels is not None and legend:
         ax.legend(**legend_kw)
     if xticks is not False:
         ax.set_xticks(x)
@@ -965,6 +975,7 @@ def grouped_violins(
     stroke=True,
     error=np.nanstd,
     errorbar=True,
+    legend=True,
     points=False,
     lighten_points=False,
     point_jitter=0.1,
@@ -1023,6 +1034,7 @@ def grouped_violins(
         vlines=vlines,
         offset=offset,
         lim_buffer=lim_buffer,
+        legend=legend,
         ax=ax,
         vline_kw=vline_kw,
         legend_kw=legend_kw,
