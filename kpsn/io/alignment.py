@@ -165,7 +165,6 @@ class sagittal(AlignmentMethod):
         sagittal._setup_config(
             full_config["alignment"], origin, anterior, rescale
         )
-        print("[alignment]", "I wonder..")
         aligned_dataset, align_inverse = sagittal._align(
             dataset, full_config["alignment"]
         )
