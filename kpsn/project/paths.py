@@ -63,6 +63,7 @@ def create_model(
     if isinstance(project, (str, os.PathLike)):
         model_dir = Path(project).parent
         config_path = project
+        project_override = None
         if config is None:
             raise ValueError(
                 "Base config `config` is required if `project` is a string or PathLike."
@@ -70,17 +71,26 @@ def create_model(
     else:
         if name is None:
             raise ValueError(
-                "`name` is required if `project` is a string or PathLike"
+                "`name` is required if `project` is not a string or PathLike"
             )
         model_dir = project.model(name)
         config_path = project.model_config(name)
         if config is None:
             config = project.base_model_config()
+        # override project location with relative path
+        proj_cfg = Path(config["project"])
+        pfx = Path(os.path.commonpath([proj_cfg, model_dir])).parts
+        project_override = str(
+            Path("../" * (len(model_dir.parts) - len(pfx)))
+            / Path(*proj_cfg.parts[len(pfx) :])
+        )
 
     if isinstance(config, (str, os.PathLike)):
         config = load_model_config(config)
 
     config = recursive_update(config, deepen(config_overrides))
     model_dir.mkdir(exist_ok=True)
+    if project_override is not None:
+        config = {**config, "project": project_override}
     save_model_config(config_path, config)
     return model_dir, config

@@ -91,7 +91,6 @@ class sagittal(AlignmentMethod):
         com = dataset.data[:, [dataset.aux["keypoint_ids"][config["origin"]]]]
         centered = dataset.data - com
 
-
         # rotate shoulders/head to align with (1,1,0)
         centered_ant_com = centered[
             :, dataset.aux["keypoint_ids"][config["anterior"]]
@@ -166,7 +165,6 @@ class sagittal(AlignmentMethod):
         sagittal._setup_config(
             full_config["alignment"], origin, anterior, rescale
         )
-        print("[alignment]", "I wonder..")
         aligned_dataset, align_inverse = sagittal._align(
             dataset, full_config["alignment"]
         )

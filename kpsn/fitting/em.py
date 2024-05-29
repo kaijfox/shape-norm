@@ -17,7 +17,7 @@ import time
 import jax
 
 from ..models import pose
-from ..io.dataset_refactor import Dataset
+from ..io.dataset_refactor import Dataset, SessionMetadata
 from ..models.joint import JointModel, JointModelParams
 from ..logging import ArrayTrace, _keystr
 from ..io.utils import split_sessions
@@ -86,6 +86,10 @@ def _save_checkpoint(save_dir, contents):
                     }
                 },
             },
+            "sessions": {
+                "metadata": contents["sessions"]["metadata"].serialize(),
+                "reference": contents["sessions"]["reference"],
+            }
         },
     }
     jl.dump(_pytree_to_numpy(contents), checkpoint_file)
@@ -137,6 +141,8 @@ def _deserialize_checkpoint(
     _tree = raw["meta"]["param_hist"]["arrays"]
     raw["meta"]["param_hist"] = ArrayTrace(raw["meta"]["param_hist"]["n_steps"])
     raw["meta"]["param_hist"]._tree = _tree
+    if "sessions" in raw:
+        raw["sessions"]["metadata"] = SessionMetadata(raw["sessions"]["metadata"])
     return raw
 
 
@@ -604,6 +610,10 @@ def iterate_em(
             meta=meta,
             step=step_i,
             status=status,
+            sessions={
+                "metadata": observations._session_meta,
+                "reference": observations.ref_session,
+            },
             **checkpoint_extra,
         ),
     )
