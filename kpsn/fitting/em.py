@@ -61,11 +61,14 @@ def _pytree_to_numpy(x):
 
 
 def _pytree_to_jax(x, mask=None):
+    if hasattr(x, "items"):
+        return {
+            k: _pytree_to_jax(v, mask[k] if mask is not None else None)
+            for k, v in x.items()
+        }
     if mask is None:
-        return pt.tree_map(
-            lambda x: jnp.array(x) if isinstance(x, np.ndarray) else x, x
-        )
-    return pt.tree_map(lambda x, flag: jnp.array(x) if flag else x, x, mask)
+        return jnp.array(x) if isinstance(x, np.ndarray) else x
+    return jnp.array(x) if mask else x
 
 
 def _save_checkpoint(save_dir, contents):
