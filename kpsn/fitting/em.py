@@ -53,16 +53,19 @@ def _pytree_sum(tree):
     return pt.tree_reduce(lambda x, y: x.sum() + y.sum(), tree)
 
 
-def _pytree_to_numpy(tree):
-    return pt.tree_map(
-        lambda x: np.array(x) if isinstance(x, jnp.ndarray) else x, tree
-    )
+def _pytree_to_numpy(x):
+    if hasattr(x, "items"):
+        y = {k: _pytree_to_numpy(v) for k, v in x.items()}
+        return {k: v[0] for k, v in y.items()}, {k: v[1] for k, v in y.items()}
+    return (np.array(x), True) if isinstance(x, jnp.ndarray) else (x, False)
 
 
-def _pytree_to_jax(tree):
-    return pt.tree_map(
-        lambda x: jnp.array(x) if isinstance(x, np.ndarray) else x, tree
-    )
+def _pytree_to_jax(x, mask=None):
+    if mask is None:
+        return pt.tree_map(
+            lambda x: jnp.array(x) if isinstance(x, np.ndarray) else x, x
+        )
+    return pt.tree_map(lambda x, flag: jnp.array(x) if flag else x, x, mask)
 
 
 def _save_checkpoint(save_dir, contents):
@@ -89,10 +92,12 @@ def _save_checkpoint(save_dir, contents):
             "sessions": {
                 "metadata": contents["sessions"]["metadata"].serialize(),
                 "reference": contents["sessions"]["reference"],
-            }
+            },
         },
     }
-    jl.dump(_pytree_to_numpy(contents), checkpoint_file)
+    np_contents, jax_mask = _pytree_to_numpy(contents)
+    np_contents["jax_mask"] = jax_mask
+    jl.dump(np_contents, checkpoint_file)
     return contents
 
 
@@ -108,7 +113,9 @@ def _load_checkpoint(filepath, model: JointModel = None, config: dict = None):
         Full config dictionary. One of model or config must be provided.
     """
     raw = jl.load(str(filepath))
-    return _deserialize_checkpoint(_pytree_to_jax(raw), model, config)
+    jax_mask = raw.pop("jax_mask")
+    raw = _pytree_to_jax(raw, jax_mask)
+    return _deserialize_checkpoint(raw, model, config)
 
 
 def _deserialize_checkpoint(
@@ -142,7 +149,9 @@ def _deserialize_checkpoint(
     raw["meta"]["param_hist"] = ArrayTrace(raw["meta"]["param_hist"]["n_steps"])
     raw["meta"]["param_hist"]._tree = _tree
     if "sessions" in raw:
-        raw["sessions"]["metadata"] = SessionMetadata(raw["sessions"]["metadata"])
+        raw["sessions"]["metadata"] = SessionMetadata(
+            raw["sessions"]["metadata"]
+        )
     return raw
 
 
@@ -514,7 +523,7 @@ def _initialize_or_continue_metadata(
     return meta
 
 
-def iterate_em(
+def _prepare_for_iteration(
     model: JointModel,
     init_params: JointModelParams,
     observations: Dataset,
@@ -522,23 +531,12 @@ def iterate_em(
     meta: dict = None,
     first_step: int = 0,
     checkpoint_dir: Path = None,
-    checkpoint_every: int = 10,
     checkpoint_extra=dict(),
-    log_every: int = -1,
     progress=False,
     return_mstep_losses=True,
     return_param_hist="trace",
     return_reports=True,
-) -> Tuple[
-    Float[Array, "n_steps"],
-    JointModelParams,
-    Float[Array, "n_steps mstep_n_steps"],
-    ArrayTrace,
-]:
-    """
-    Perform EM on a JointModel.
-    """
-
+):
     n_steps = config["n_steps"]
 
     static, hyper, curr_trained = init_params.by_type()
@@ -602,8 +600,11 @@ def iterate_em(
             replace=False,
             session_names=observations.ordered_session_names(),
         )
+    else:
+        batch_rkey_seed = None
+        generate_batch = None
 
-    save_with_status = lambda status: _save_checkpoint(
+    save_with_status = lambda status, step_i: _save_checkpoint(
         checkpoint_dir,
         dict(
             params=curr_params,
@@ -629,114 +630,293 @@ def iterate_em(
     gd_step = 0 if first_step == 0 else meta["gd_step"][first_step]
     walltime = 0 if first_step == 0 else meta["walltime"][first_step]
 
-    for step_i in step_iter:
-        step_start_time = time.time()
-        aux_pdf = jitted_estep(
-            *observations.serialize(),
-            static,
-            hyper,
-            curr_trained,
+    return (
+        jitted_mstep,
+        jitted_estep,
+        save_with_status,
+        step_iter,
+        gd_step,
+        walltime,
+        batch_rkey_seed,
+        generate_batch,
+        static,
+        hyper,
+        curr_trained,
+        optimizer,
+        lr_sched,
+        meta,
+    )
+
+
+def _em_step(
+    step_i,
+    observations,
+    static,
+    hyper,
+    curr_trained,
+    config,
+    generate_batch,
+    meta,
+    optimizer,
+    lr_sched,
+    jitted_estep,
+    jitted_mstep,
+    return_param_hist,
+    batch_rkey_seed,
+):
+    step_start_time = time.time()
+    aux_pdf = jitted_estep(
+        *observations.serialize(),
+        static,
+        hyper,
+        curr_trained,
+    )
+
+    if config["batch_size"] is not None:
+        batch_rkey_seed, step_obs, ixs = generate_batch(batch_rkey_seed)
+        step_aux = aux_pdf[ixs]
+    else:
+        step_obs = observations
+        step_aux = aux_pdf
+
+    if config["mstep"]["reinit_opt"]:
+        meta["opt_state"] = optimizer.init(curr_trained)
+    meta["opt_state"].hyperparams["learning_rate"] = lr_sched(step_i)
+    (
+        loss_hist_mstep,
+        trained_params_mstep,
+        mstep_end_objective,
+        mstep_param_trace,
+        meta["opt_state"],
+    ) = _mstep(
+        init_params=curr_trained,
+        static_params=static,
+        hyper_params=hyper,
+        aux_pdf=step_aux,
+        observations=step_obs,
+        jitted_step=jitted_mstep,
+        opt_state=meta["opt_state"],
+        session_names=observations.ordered_session_names(),
+        batch_seed=(config["mstep"]["batch_seed"] + step_i),
+        trace_params=return_param_hist == "mstep",
+        config=config["mstep"],
+    )
+
+    return (
+        step_start_time,
+        loss_hist_mstep,
+        trained_params_mstep,
+        mstep_end_objective,
+        mstep_param_trace,
+        curr_trained,
+        batch_rkey_seed,
+    )
+
+
+def _em_poststep(
+    step_i,
+    meta,
+    observations,
+    config,
+    loss_hist_mstep,
+    curr_trained,
+    return_mstep_losses,
+    return_param_hist,
+    return_reports,
+    model,
+    static,
+    hyper,
+    mstep_param_trace,
+    jitted_estep,
+    lr_sched,
+    mstep_end_objective,
+    log_every,
+    checkpoint_every,
+    save_with_status,
+    step_start_time,
+    gd_step,
+    walltime,
+):
+
+    mstep_len = len(loss_hist_mstep)
+    meta["loss"] = meta["loss"].at[step_i].set(loss_hist_mstep[-1])
+    meta["mstep_length"] = meta["mstep_length"].at[step_i].set(mstep_len)
+    new_gd_step = gd_step + mstep_len
+    meta["gd_step"] = meta["gd_step"].at[step_i].set(new_gd_step)
+
+    if return_mstep_losses:
+        meta["mstep_losses"] = (
+            meta["mstep_losses"].at[step_i, :mstep_len].set(loss_hist_mstep)
+        )
+    if return_param_hist == "trace":
+        meta["param_hist"].record(curr_trained, step_i + 1)
+    elif return_param_hist == "mstep":
+        meta["param_hist"].record(mstep_param_trace.as_dict(), step_i)
+
+    curr_params = JointModelParams.from_types(
+        model, static, hyper, curr_trained
+    )
+
+    if return_reports:
+        aux_reports = {}
+        if config["full_dataset_objectives"]:
+            aux_reports["dataset_logprob"] = _mstep_objective(
+                model,
+                observations,
+                curr_params,
+                aux_pdf=jitted_estep(
+                    *observations.serialize(),
+                    static,
+                    hyper,
+                    curr_trained,
+                ),
+            )["objectives"]["dataset"]
+        meta["reports"].record(
+            dict(
+                logprobs=mstep_end_objective,
+                lr=jnp.array(lr_sched(step_i)),
+                **aux_reports,
+            ),
+            step_i,
         )
 
-        if config["batch_size"] is not None:
-            batch_rkey_seed, step_obs, ixs = generate_batch(batch_rkey_seed)
-            step_aux = aux_pdf[ixs]
-        else:
-            step_obs = observations
-            step_aux = aux_pdf
+    if (log_every > 0) and (not step_i % log_every):
+        logging.info(f"Step {step_i} : loss = {meta['loss'][step_i]}")
 
-        if config["mstep"]["reinit_opt"]:
-            meta["opt_state"] = optimizer.init(curr_trained)
-        meta["opt_state"].hyperparams["learning_rate"] = lr_sched(step_i)
+    if (checkpoint_every > 0) and (step_i % checkpoint_every == 0):
+        save_with_status("in_progress", step_i)
+
+    # evaluate early stopping and divergence
+    converged = _check_should_stop_early(
+        meta["loss"], step_i, config["tol"], config["stop_window"]
+    )
+    should_break = False
+    if converged:
+        meta["loss"] = meta["loss"][: step_i + 1]
+        logging.info("Stopping due to early convergence or divergence.")
+        save_with_status("finished.early_stop", step_i)
+        should_break = True
+    if not jnp.isfinite(meta["loss"][step_i]):
+        meta["loss"] = meta["loss"][: step_i + 1]
+        logging.warning("Stopping, diverged.")
+        save_with_status("finished.diverged", step_i)
+        should_break = True
+
+    end_walltime = walltime + (time.time() - step_start_time)
+    meta["walltime"] = meta["walltime"].at[step_i].set(end_walltime)
+
+    return end_walltime, new_gd_step, should_break
+
+
+def iterate_em(
+    model: JointModel,
+    init_params: JointModelParams,
+    observations: Dataset,
+    config: dict,
+    meta: dict = None,
+    first_step: int = 0,
+    checkpoint_dir: Path = None,
+    checkpoint_every: int = 10,
+    checkpoint_extra=dict(),
+    log_every: int = -1,
+    progress=False,
+    return_mstep_losses=True,
+    return_param_hist="trace",
+    return_reports=True,
+) -> Tuple[
+    Float[Array, "n_steps"],
+    JointModelParams,
+    Float[Array, "n_steps mstep_n_steps"],
+    ArrayTrace,
+]:
+    """
+    Perform EM on a JointModel.
+    """
+
+    (
+        jitted_mstep,
+        jitted_estep,
+        save_with_status,
+        step_iter,
+        gd_step,
+        walltime,
+        batch_rkey_seed,
+        generate_batch,
+        static,
+        hyper,
+        curr_trained,
+        optimizer,
+        lr_sched,
+        meta,
+    ) = _prepare_for_iteration(
+        model,
+        init_params,
+        observations,
+        config,
+        meta,
+        first_step,
+        checkpoint_dir,
+        checkpoint_extra,
+        progress,
+        return_mstep_losses,
+        return_param_hist,
+        return_reports,
+    )
+
+    for step_i in step_iter:
         (
+            step_start_time,
             loss_hist_mstep,
             trained_params_mstep,
             mstep_end_objective,
             mstep_param_trace,
-            meta["opt_state"],
-        ) = _mstep(
-            init_params=curr_trained,
-            static_params=static,
-            hyper_params=hyper,
-            aux_pdf=step_aux,
-            observations=step_obs,
-            jitted_step=jitted_mstep,
-            opt_state=meta["opt_state"],
-            session_names=observations.ordered_session_names(),
-            batch_seed=(config["mstep"]["batch_seed"] + step_i),
-            trace_params=return_param_hist == "mstep",
-            config=config["mstep"],
-        )
-
-        mstep_len = len(loss_hist_mstep)
-        meta["loss"] = meta["loss"].at[step_i].set(loss_hist_mstep[-1])
-        meta["mstep_length"] = meta["mstep_length"].at[step_i].set(mstep_len)
-        meta["gd_step"] = (
-            meta["gd_step"].at[step_i].set(gd_step := gd_step + mstep_len)
+            curr_trained,
+            batch_rkey_seed,
+        ) = _em_step(
+            step_i,
+            observations,
+            static,
+            hyper,
+            curr_trained,
+            config,
+            generate_batch,
+            meta,
+            optimizer,
+            lr_sched,
+            jitted_estep,
+            jitted_mstep,
+            return_param_hist,
+            batch_rkey_seed,
         )
         curr_trained = trained_params_mstep
-        if return_mstep_losses:
-            meta["mstep_losses"] = (
-                meta["mstep_losses"].at[step_i, :mstep_len].set(loss_hist_mstep)
-            )
-        if return_param_hist == "trace":
-            meta["param_hist"].record(curr_trained, step_i + 1)
-        elif return_param_hist == "mstep":
-            meta["param_hist"].record(mstep_param_trace.as_dict(), step_i)
 
-        curr_params = JointModelParams.from_types(
-            model, static, hyper, curr_trained
+        walltime, gd_step, should_break = _em_poststep(
+            step_i,
+            meta,
+            observations,
+            config,
+            loss_hist_mstep,
+            curr_trained,
+            return_mstep_losses,
+            return_param_hist,
+            return_reports,
+            model,
+            static,
+            hyper,
+            mstep_param_trace,
+            jitted_estep,
+            lr_sched,
+            mstep_end_objective,
+            log_every,
+            checkpoint_every,
+            save_with_status,
+            step_start_time,
+            gd_step,
+            walltime,
         )
 
-        if return_reports:
-            aux_reports = {}
-            if config["full_dataset_objectives"]:
-                aux_reports["dataset_logprob"] = _mstep_objective(
-                    model,
-                    observations,
-                    curr_params,
-                    aux_pdf=jitted_estep(
-                        *observations.serialize(),
-                        static,
-                        hyper,
-                        curr_trained,
-                    ),
-                )["objectives"]["dataset"]
-            meta["reports"].record(
-                dict(
-                    logprobs=mstep_end_objective,
-                    lr=jnp.array(lr_sched(step_i)),
-                    **aux_reports,
-                ),
-                step_i,
-            )
-
-        if (log_every > 0) and (not step_i % log_every):
-            logging.info(f"Step {step_i} : loss = {meta['loss'][step_i]}")
-
-        if (checkpoint_every > 0) and (step_i % checkpoint_every == 0):
-            save_with_status("in_progress")
-
-        # evaluate early stopping and divergence
-        converged = _check_should_stop_early(
-            meta["loss"], step_i, config["tol"], config["stop_window"]
-        )
-        if converged:
-            meta["loss"] = meta["loss"][: step_i + 1]
-            logging.info("Stopping due to early convergence or divergence.")
-            save_with_status("finished.early_stop")
-            break
-        if not jnp.isfinite(meta["loss"][step_i]):
-            meta["loss"] = meta["loss"][: step_i + 1]
-            logging.warning("Stopping, diverged.")
-            save_with_status("finished.diverged")
+        if should_break:
             break
 
-        meta["walltime"] = (
-            meta["walltime"]
-            .at[step_i]
-            .set(walltime := (walltime + (time.time() - step_start_time)))
-        )
-
-    final_ckpt = save_with_status("finished")
+    final_ckpt = save_with_status("finished", step_i)
     return final_ckpt

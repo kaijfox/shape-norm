@@ -59,6 +59,7 @@ def create_model(
         PathLike, the path to the config file. If None, the base model config
         for the project will be used.
     """
+    ensure_dirs(project)
 
     if isinstance(project, (str, os.PathLike)):
         model_dir = Path(project).parent
@@ -76,7 +77,7 @@ def create_model(
         model_dir = project.model(name)
         config_path = project.model_config(name)
         if config is None:
-            config = project.base_model_config()
+            config = load_model_config(project.base_model_config())
         # override project location with relative path
         proj_cfg = Path(config["project"])
         pfx = Path(os.path.commonpath([proj_cfg, model_dir])).parts
