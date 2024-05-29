@@ -410,6 +410,10 @@ class Dataset:
         if isinstance(session, str):
             session = self.session_meta.session_id(session)
         return self.stack_meta.slices[session]
+    
+    def get_session(self, session: Union[str, int]) -> Union[np.ndarray, jnp.ndarray]:
+        slice_ = self.get_slice(session)
+        return self.data[slice_[0] : slice_[1]]
 
     def session_length(self, session: Union[str, int]) -> int:
         slc = self.get_slice(session)

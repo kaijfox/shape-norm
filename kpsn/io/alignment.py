@@ -24,12 +24,12 @@ def _align_scales(dataset: Dataset, config):
 
     anterior_ixs = [dataset.aux["keypoint_ids"][config["anterior"]]]
     posterior_ixs = [dataset.aux["keypoint_ids"][config["origin"]]]
-    absolute_scales = []
+    absolute_scales = np.zeros(dataset.n_sessions)
     for sess in dataset.sessions:
         anterior_com = dataset.get_session(sess)[:, anterior_ixs].mean(axis=1)
         posterior_com = dataset.get_session(sess)[:, posterior_ixs].mean(axis=1)
-        absolute_scales.append(
-            np.median(la.norm(anterior_com - posterior_com, axis=-1), axis=0)
+        absolute_scales[dataset.session_id(sess)] = np.median(
+            la.norm(anterior_com - posterior_com, axis=-1), axis=0
         )
     absolute_scales = np.array(absolute_scales)
     scales = absolute_scales / absolute_scales.mean()
@@ -90,7 +90,6 @@ class sagittal(AlignmentMethod):
         # center hips/back or origin-keypt on (0,0,0)
         com = dataset.data[:, [dataset.aux["keypoint_ids"][config["origin"]]]]
         centered = dataset.data - com
-
 
         # rotate shoulders/head to align with (1,1,0)
         centered_ant_com = centered[

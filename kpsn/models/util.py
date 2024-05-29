@@ -30,6 +30,7 @@ def induced_reference_keypoints(
     morph_model: MorphModel,
     params: Union[MorphModelParams, list, tuple],
     to_body=None,
+    ref_frames=None,
     include_reference: bool = False,
     return_features=False,
 ):
@@ -46,7 +47,8 @@ def induced_reference_keypoints(
     session = dataset.ref_session
     if to_body is None:
         ref_body = dataset.session_body_name(session)
-        ref_frames = dataset.get_session(session)
+        if ref_frames is None:
+            ref_frames = dataset.get_session(session)
 
         all_bodies = {
             b for b in dataset.bodies if (b != ref_body or include_reference)
