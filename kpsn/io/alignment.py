@@ -12,11 +12,12 @@ def _align_scales(dataset: Dataset, config):
 
     Parameters
     ----------
-    dataset : List[numpy array (frames, dataset, spatial)]
+    dataset : Dataset
+        Containing obervations of shape (n_points, n_spatial_dim)
 
     Returns
     -------
-    scaled_dataset :List[numpy array (frames, keypts, spatial)]
+    scaled_dataset : Dataaet
         Dilated keypoint data.
     scales : array (sessions)
         Relative scale factors of the original sessions.
@@ -40,18 +41,30 @@ def _align_scales(dataset: Dataset, config):
     return scaled, scales
 
 
-def _inverse_align_scales(dataset: Dataset, scales: np.ndarray):
+def _inverse_align_scales(dataset: Dataset, scales: np.ndarray, stacked = False):
     """Invert `_align_scales`.
 
     Parameters
     ----------
-    dataset : Dataset
-    scales : array (n_sessions,)
-        Relative scale factors of the original sessions.
+    dataset : Dataset or ndarray
+        Dataset containing observaitons of shape (n_points, n_spatial_dim), or
+        an array of shape (n_frames, n_points, n_spatial_dim)
+    scales : array (n_sessions,) or (n_pts,)
+        Relative scale factors of the original sessions, or those scale factors
+        arranged to match the stacked data array in `dataset`.
+    stacked : bool
+        Whether `scales` reflects stacked data array structure of `dataset`
+        (True) or is indexed by session ids (False).
     """
-    return dataset.update(
-        data=dataset.data * scales[dataset.stack_session_ids, None, None]
-    )
+    if not stacked:
+        scales = scales[dataset.stack_session_ids, None, None]
+    else:
+        scales = scales[:, None, None]
+    
+    if hasattr(dataset, "from_arrays"):    
+        return dataset.update(data=dataset.data * scales)
+    else:
+        return dataset * scales
 
 
 class AlignmentMethod(object):
@@ -226,7 +239,7 @@ def align(dataset: Dataset, config: dict):
     """
     aln_type = config["type"]
     if aln_type not in alignment_types:
-        raise NotImplementedError(f"Unknown dataset type: {aln_type}")
+        raise NotImplementedError(f"Unknown alignment type: {aln_type}")
     return alignment_types[aln_type]._align(dataset, config)
 
 
@@ -234,7 +247,7 @@ def invert_align(dataset: Dataset, align_meta: dict, config: dict, **kwargs):
     """Invert alignment of keypoint data to egocentric coordinates."""
     aln_type = config["type"]
     if aln_type not in alignment_types:
-        raise NotImplementedError(f"Unknown dataset type: {aln_type}")
+        raise NotImplementedError(f"Unknown aligment type: {aln_type}")
     return alignment_types[aln_type]._inverse(
         dataset, align_meta, config, **kwargs
     )

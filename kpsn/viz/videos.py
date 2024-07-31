@@ -2,6 +2,7 @@ from ..io.loaders import _get_root_path
 from ..io.armature import Armature
 from .util import plot_mouse
 from ..io.utils import stack_dict
+from ..io.dataset_refactor import Dataset
 from ..models.util import _optional_pbar, apply_bodies
 from ..models.instantiation import get_model
 from ..fitting.methods import load_and_prepare_dataset
@@ -12,6 +13,7 @@ import cv2
 import numpy as np
 import imageio.v3 as iio
 import logging
+from bidict import bidict
 from matplotlib import colors as plt_colors
 
 
@@ -474,19 +476,34 @@ def map_clip_across_bodies(
     if source_session is None:
         source_session = dataset.ref_session
 
-    ref_body = dataset.sess_bodies[source_session]
+    # creata a dataset with the same clip
+    ref_body = dataset.session_body_name(source_session)
     ref_kpt_frames = dataset.get_session(source_session)[start:end]
     new_data, slices = stack_dict(
         {f"s-{b}": ref_kpt_frames for b in dataset.bodies}
     )
     new_bodies = {f"s-{b}": ref_body for b in dataset.bodies}
-    short_data = dataset.with_sessions(
-        new_data,
-        slices,
-        new_bodies,
-        f"s-{ref_body}",
-        _body_names=dataset._body_names,
+    new_session_ids = bidict(
+        {s: i for i, s in enumerate(sorted(slices.keys()))}
     )
+    new_ref_session = new_session_ids[f"s-{ref_body}"]
+    short_data = dataset.update(
+        new_data,
+        stack_meta=dataset.stack_meta.update({
+            new_session_ids[k]: s for k, s in slices.items()
+        }),
+        session_meta=dataset.session_meta.update(
+            session_ids=new_session_ids, session_bodies=new_bodies
+        ),
+        ref_session = new_ref_session
+    )
+    # short_data = dataset.with_sessions(
+    #     new_data,
+    #     slices,
+    #     new_bodies,
+    #     f"s-{ref_body}",
+    #     _body_names=dataset._body_names,
+    # )
     # map each session onto the body for which the session is named
     return (
         apply_bodies(
@@ -559,8 +576,8 @@ def overlay_tiles_for_bodies(
         # align mapped sessions to the egocentric view from above and overlay
         # atop the reference session keypoints
         for b in _optional_pbar(
-                bodies, f"Rendering {view_name}" if progress else False
-            ):
+            bodies, f"Rendering {view_name}" if progress else False
+        ):
             inflated = _inflate(mapped_dataset.get_session(f"s-{b}"))[
                 ..., [xaxis, yaxis]
             ]

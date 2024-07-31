@@ -363,10 +363,13 @@ def unique_handles(ax):
     return newHandles, newLabels
 
 
-def kde(sample, bw, resolution=200, buffer=5, density=False):
-    x = np.linspace(
-        sample.min() - buffer * bw, sample.max() + buffer * bw, resolution
-    )
+def kde(sample, bw, resolution=200, buffer=5, density=False, eval_x = None):
+    if eval_x is None:
+        x = np.linspace(
+            sample.min() - buffer * bw, sample.max() + buffer * bw, resolution
+        )
+    else:
+        x = eval_x
     gauss = lambda x, sample, bw: np.exp(-0.5 * ((sample - x) / bw) ** 2)
     kde = gauss(x[:, None], sample[None, :], bw).sum(axis=-1)
     if density:
@@ -585,6 +588,21 @@ def grouped_stripplot(
     return ax
 
 
+def expand_groups(data, group_names, ndim = 1):
+    """Convert list of arrays to dictionary of lists of arrays for grouped
+    plots.
+    
+    data : list[array]
+        List of arrays to be arranged into groups.
+    group_names : list
+        List of group name corresponding to each array.
+    """
+    e = [np.full([1] * ndim, np.nan)]
+    return {k: e * i + [d] + e * (len(data) - i - 1) for i, (d, k) in enumerate(zip(data, group_names))}
+
+
+
+
 def grouped_errorbar_strips(
     data: dict,
     x=None,
@@ -597,6 +615,7 @@ def grouped_errorbar_strips(
     jitter=0.05,
     lim_buffer=None,
     error=np.nanstd,
+    offset=True,
     ax=None,
     errorbar_kw={},
     vline_kw={},
@@ -655,7 +674,7 @@ def grouped_errorbar_strips(
 
         ofs = (i_grp - (len(group_order) - 1) / 2) * min(
             0.2, 0.6 / len(group_order)
-        )
+        ) * offset
 
         means = [np.array([np.nanmean(arr) for arr in la]) for la in data[grp]]
         errs = [
@@ -889,6 +908,7 @@ def __grouped_violins(arrs, ofs, x, color, label, ax, **kws):
     points_kw = kws["points_kw"]
     point_jitter = kws["point_jitter"]
     jitter = kws["jitter"]
+    thumb_bandwidth = kws["thumb_bandwidth"]
     bw = kws["bw"]
     resolution = kws["resolution"]
     width = kws["width"]
@@ -915,6 +935,9 @@ def __grouped_violins(arrs, ofs, x, color, label, ax, **kws):
 
     for x__, arrs__ in zip(strip_x, arrs):
         for x_, arr in zip(x__, arrs__):
+            if thumb_bandwidth:
+                iqr = np.percentile(arr, 75) - np.percentile(arr, 25)
+                bw_ = bw * 0.9 * min(np.std(arr), iqr / 1.34) * len(arr) ** (-0.2)
             y, k = kde(arr, bw, resolution=resolution, buffer=bw_buffer)
             k = k / k.max() * width / 2
             k = k - k.min()
@@ -975,6 +998,7 @@ def grouped_violins(
     stroke=True,
     error=np.nanstd,
     errorbar=True,
+    thumb_bandwidth=False,
     legend=True,
     points=False,
     lighten_points=False,
@@ -1020,11 +1044,154 @@ def grouped_violins(
             "points_kw": points_kw,
             "lighten_points": lighten_points,
             "point_jitter": point_jitter,
+            "thumb_bandwidth": thumb_bandwidth,
             "jitter": jitter,
             "bw": bw,
             "resolution": resolution,
             "width": width,
             "bw_buffer": bw_buffer,
+        },
+        x=x,
+        group_order=group_order,
+        labels=labels,
+        colors=colors,
+        xticks=xticks,
+        vlines=vlines,
+        offset=offset,
+        lim_buffer=lim_buffer,
+        legend=legend,
+        ax=ax,
+        vline_kw=vline_kw,
+        legend_kw=legend_kw,
+        xtick_kw=xtick_kw,
+    )
+
+
+def __grouped_violin_points(arrs, ofs, x, color, label, ax, **kws):
+    """
+    Arrs: list of list of arrays. First index is x, second is multiple arrays to
+    be plotted at x."""
+    error = kws["error"]
+    errorbar_kw = kws["errorbar_kw"]
+    errorbar = kws["errorbar"]
+    points = kws["points"]
+    lighten_points = kws["lighten_points"]
+    points_kw = kws["points_kw"]
+    point_jitter = kws["point_jitter"]
+    jitter = kws["jitter"]
+    bw = kws["bw"]
+    resolution = kws["resolution"]
+    width = kws["width"]
+
+    means = [np.array([np.nanmean(arr) for arr in la]) for la in arrs]
+    errs = [
+        np.array(
+            [np.broadcast_to(np.atleast_1d(error(arr)), (2,)) for arr in la]
+        )
+        for la in arrs
+    ]
+
+    strip_x, strip_ys = multi_stripplot(
+        [
+            means,
+            [la_err[:, 0] for la_err in errs],
+            [la_err[:, 1] for la_err in errs],
+        ],
+        x=x,
+        jitter=jitter,
+        aslist=True,
+    )
+
+    for x__, arrs__ in zip(strip_x, arrs):
+        for x_, arr in zip(x__, arrs__):
+            y, k = kde(arr, bw, eval_x = arr)
+            k = k / k.max() * width / 2
+            k = k - k.min()
+
+            if points:
+                if lighten_points is not False:
+                    c = lighten(color, lighten_points)
+                else:
+                    c = color
+                jtr = jitter_points(np.full_like(arr, 0), scale=1) * k
+                ax.plot(
+                    jtr + ofs + x_,
+                    arr,
+                    **{**dict(color=c, ls="", marker="o"), **points_kw},
+                )
+
+        if errorbar:
+            ax.errorbar(
+                np.concatenate(strip_x) + ofs,
+                np.concatenate(strip_ys[0]),
+                yerr=np.stack(
+                    [np.concatenate(strip_ys[1]), np.concatenate(strip_ys[2])]
+                ),
+                color=color,
+                **errorbar_kw,
+            )
+
+
+
+def grouped_violin_points(
+    data: dict,
+    x=None,
+    group_order=None,
+    labels=None,
+    colors=None,
+    xticks=None,
+    vlines=False,
+    bw=None,
+    resolution=200,
+    width=0.3,
+    jitter=0.05,
+    offset=True,
+    lim_buffer=None,
+    error=np.nanstd,
+    errorbar=True,
+    legend=True,
+    points=True,
+    lighten_points=False,
+    point_jitter=0.1,
+    ax=None,
+    errorbar_kw={},
+    points_kw={},
+    vline_kw={},
+    legend_kw={},
+    xtick_kw={},
+):
+    """
+    Parameters
+    ----------
+    data : dict,
+        Dictionary of lists of lists of arrays to plot in strips, with keys as hue
+        labels, and list indices as indices in `x`. Therefore all values should
+        have the same length."""
+
+    # merge kwargs with defaults
+
+    errorbar_kw = {**{"fmt": "o", "ms": 3, "elinewidth": 1}, **errorbar_kw}
+    legend_kw = {
+        **{"frameon": False, "bbox_to_anchor": (1.05, 1), "loc": "upper left"},
+        **legend_kw,
+    }
+    points_kw = {**{"ms": 2}, **points_kw}
+
+    return _grouped_plot(
+        data,
+        __grouped_violin_points,
+        {
+            "error": error,
+            "errorbar_kw": errorbar_kw,
+            "errorbar": errorbar,
+            "points": points,
+            "points_kw": points_kw,
+            "lighten_points": lighten_points,
+            "point_jitter": point_jitter,
+            "jitter": jitter,
+            "bw": bw,
+            "resolution": resolution,
+            "width": width,
         },
         x=x,
         group_order=group_order,
@@ -1069,20 +1236,27 @@ def ci(
     seed=0,
     n=100,
     alternative="two-sided",
+    absolute = False,
+    return_samples=False,
 ):
     sample_stat = stat(arr)
     rng = np.random.default_rng(seed)
     samples = stat(
         arr[rng.choice(arr.shape[0], (n, *arr.shape), replace=True)], axis=1
     )
+    if return_samples:
+        return samples
     if alternative == "two-sided":
         edge = (1 - level) / 2
         ci = np.quantile(samples, [edge, 1 - edge], axis=0)
+        if absolute: return ci
         return sample_stat - ci[0], ci[1] - sample_stat
     elif alternative == "less":
         ci = np.quantile(samples, level, axis=0)
+        if absolute: return ci
         return sample_stat - ci
     elif alternative == "greater":
+        if absolute: return ci
         ci = np.quantile(samples, 1 - level, axis=0)
         return ci - sample_stat
 
