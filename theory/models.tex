@@ -1,0 +1,177 @@
+\documentclass{article}         %% What type of document you're writing.
+\usepackage[fleqn]{amsmath}
+\usepackage{amsfonts,amssymb}   %% AMS mathematics macros
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{amssymb}
+\usepackage{parskip}
+\usepackage{mathtools}
+\usepackage{bm}
+\usepackage[margin=1.3in]{geometry}
+\usepackage{hyperref}
+\usepackage{amsthm}
+\usepackage{tikz}
+%\usetikzlibrary{bayesnet}
+\usetikzlibrary{arrows}
+\usepackage{color}
+\usepackage{caption}
+\usepackage{subcaption}
+\usetikzlibrary{backgrounds}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{definition}{Definition}[section]
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{corollary}{Corollary}[section]
+\newtheorem{lemma}{Lemma}[section]
+\newcommand\descitem[1]{\item{\bfseries #1}}
+\DeclareMathOperator{\tr}{tr}
+\DeclareMathOperator{\re}{Re}
+\DeclareMathOperator{\im}{Im}
+\DeclareMathOperator{\argmax}{\arg\max}
+\DeclareMathOperator{\pad}{pad}
+\graphicspath{ {./figs/} }
+\newcommand{\inv}{^{-1}}
+\newcommand{\pd}{\partial}
+\newcommand{\EE}{\mathbb{E}}
+\newcommand{\RR}{\mathbb{R}}
+\newcommand{\ZZ}{\mathbb{Z}}
+\newcommand{\NN}{\mathcal{N}}
+\newcommand{\mat}[1]{\begin{matrix} #1 \end{matrix}}
+\newcommand{\abs}[1]{\left| #1 \right|}
+\newcommand{\norm}[1]{\left|\left| #1 \right|\right|}
+\newcommand{\cb}[1]{\left\{ #1 \right\}}
+\newcommand{\pn}[1]{\left( #1 \right)}
+\newcommand{\bc}[1]{\left[ #1 \right]}
+\renewcommand{\cal}[1]{\mathcal{#1}}
+\newcommand{\eps}{\varepsilon}
+\DeclareMathOperator{\Tr}{Tr}
+\usepackage{titling}
+
+\title{Shape normalization for keypoint data}
+\author{Caleb Weinreb and Kai Fox}
+\date{May 2023}
+
+\begin{document}
+
+\maketitle
+
+\section{Modeling framework}
+\label{sec:model-fwk}
+
+The goal of shape normalization is to map keypoint observations from many animals into a standardized pose space where the effects of body morphology have been removed. Naively, one might hope to normalize using simple summary statistics like average nose-to-tail distance. But these statistics are problematic because they conflate body shape with behavior. For example, larger average nose-to-tail distance could reflect a larger body, or simply a higher frequency of stretched-out poses. Thus the central challenge of shape normalization is to isolate the effects of behavior and body shape so that the latter can be cleanly removed. To that end, we propose a generative model that factors behavior and morphology into separate terms that are disentangled during fitting.
+
+\subsection{Input data}
+
+We consider a dataset of poses $\{y_{n,t}\} \subset \mathbb{R}^{KD}$ measured from animals $n=1,\dots,N$ at timepoints $t=1,\dots,T_n$ (the timepoints need not be sequential), where each pose contains coordinates of $K$ keypoints in $D$ dimensions. We assume that the keypoints are already centered and rotationally aligned, and that differences in body size have already been minimized as much as possible through uniform scaling of each animal. 
+
+\subsection{Generative model}
+\label{sec:gen-model}
+
+We model each pose $y_{n,t}$ as the animal-specific realization of a standardized pose $x_{n,t}$ that is sampled from a Gaussian mixture. The mixture components are shared across animals, but the mixture weights are animal-specific. Formally, the model is
+%
+\begin{align*}
+    y_{n,t} & = f(x_{n,t}, \phi_n) 
+        && \text{(observed pose given standardized pose)} \\
+    x_{n,t} & \sim \NN(m_{z_{n,t}}, Q_{z_{n,t}}) 
+        && \text{(standardized pose given mixture component)}  \\
+    z_{n,t} & \sim \text{Cat}(\pi_n)  
+        && \text{(mixture component given animal-specific weights)} \\
+    m_z & \sim \NN(m_0, \lambda_0^{-1} Q_z) 
+        && \text{(prior on mixture means given covariances)} \\
+    Q_z & \sim \text{Wishart}^{-1}(W_0, \nu_0) 
+        && \text{(prior on mixture covariances)} \\
+    \pi_n & \sim \text{Dir}(\beta)
+        && \text{(prior on animal-specific mixture weights)} \\
+    \beta & \sim \text{Dir}(\gamma,\dots,\gamma)
+        && \text{(prior on mixture weight hyperparameters)}
+\end{align*}   
+%
+where $f$ is a morph function that maps standardized poses $x_{n,t}$ to animal-specific poses $y_{n,t}$ and $\phi_n$ is a parameter vector that captures the unique shape of animal $n$. Several forms for $f$ (and priors on $\phi_n$) are described in Section XXX and tested in the paper. In general, $f$ should be invertible in its first argument and differentiable in its second. Abusing notation, we will use $f^{-1}$ to denote the inverse of $f$ in its first argument.
+
+
+
+\subsection{Expectation maximization}
+\label{sec:em-general}
+
+The model parameters $\theta = (\phi, m, Q, \pi, \beta)$ are fit using expectation maximization (EM), which aims to maximize the expected log likelihood $\ell(\theta) = \EE \log P(y, z \mid \theta)$. EM alternates between two steps.
+
+
+% EM iteratively computes a posterior $q(z) = P(z \mid y, \theta^*)$ given the current parameter estimates $\theta^*$ (E-step), and then finds new parameter estimates $\theta^*_\text{new}$ by maximizing the following objective with respect to $\theta$ (M-step).
+% \begin{align}
+%     A(\theta; \theta^*) = \EE_{q(z)} \log P(y, z \mid \theta) + \log P(\theta)
+%     \label{eq:A-defn}
+% \end{align}
+% The theoretical basis for EM is that this procedure guarantees monotonic increases in the expected log likelihood, i.e. $\ell(\theta^*_{\text{new}}) \geq \ell(\theta^*)$ (see Murphy 11.4.7 [cite]). Expressions for $q(z)$ and $A(\theta; \theta^*)$ are given below. We perform the M-step optimization with gradient ascent. 
+
+\paragraph{E-step} Given current parameter estimates $\theta^* = (\phi^*, m^*, Q^*, \pi^*, \beta^*)$, calculate the posterior $q(z) = P(z \mid y, \theta^*)$, as follows.
+%
+\begin{align}
+    q(z) & = \prod_{n,t} P(z_{n,t} \mid y_{n,t}, \phi^*, m^*, Q^*, \pi^*) \\
+    & \propto  \prod_{n,t}  \NN(f^{-1}(y_{n,t}, \phi^*_n) \mid m_{z_{n,t}^*}, Q_{z_{n,t}^*}) \cdot \pi_{n,z_{n,t}}^* \label{eq:q-propto-statement}
+\end{align}
+
+\paragraph{M-step} Given $q(z)$ from the E-step, obtain new parameter estimates by optimizing the following objective with respect to $\theta = (\phi, m, Q, \pi, \beta)$ (using gradient ascent).
+\begin{align}
+    & A(\theta; \theta^*)  = \sum_{n,t} \EE_q \log P(y_{n,t}, z_{n,t} \mid \theta) + \log P(\theta) \\
+    & =  \sum_{n,t} q(z_{n,t}) \log \left[ \NN(f^{-1}(y_{n,t}, \phi_n) \mid m_{z_{n,t}}, Q_{z_{n,t}}) \cdot \det(J)  \cdot \pi_{n, z_{n, t}} \right] + \log P(\theta) \label{eq:A-modeled}
+\end{align}
+where $J$ is the Jacobian of $f^{-1}$ (in its first argument) evaluated at $y_{n,t}$.
+
+\subsection{Initialization}
+Initialization of the morph parameters $\phi$ is described in section XXX. Given morph parameters, we fit a standard Gaussian mixture model to the points $x_{n,t} = f^{-1}(y_{n,t}, \phi_n)$ (e.g. with sklearn), yielding mixture components $(m_z, Q_z), z=1,...,L$ and cluster weights $\lambda_{n,t,z}$ for each data point. Using the weights, we initialize $\pi$ and $\beta$ as follows.
+\begin{align}
+    \pi_{n,z} = \frac{1}{T_n} \sum_{t=1}^{T_n} \lambda_{n,t,z}, \quad \beta_z = \frac{1}{N} \sum_{n=1}^N \pi_{n,z}
+\end{align}
+
+\section{Morph models}
+
+\subsection{Low-rank affine morph}
+
+One way to enforce simplicity $f(x, \phi)$ is to make it an affine map in $x$. However, because $x\in\RR^{KD}$ is rather high dimensional, this still leaves a huge number of degrees of freedom. We therefore also enforce in this morph model that the linear component of $f$ be low-rank.
+
+The main adjustment of posture will be performed by the affine offset. For example, this might set certain bone lengths to be longer for a particular session. It is unlikely that these updates will be sufficient across all poses however - e.g. when limbs are extended in 2D keypoints the bone lengths adjustments need to be greater, or in 3D keypoints the updated needed to extend bone lengths during a rear are different from those needed during running. We therefore also add an update to the first $L$ PCs (``modes''), inferred from a reference session and fixed during training.
+
+The morph function described above may be formulated in terms of the following hyperparameters:
+\begin{align*}
+    m&\in \RR^{KD} &&
+        && \text{Centroid of population pose space} \\
+    U&\in \RR^{L\times KD} &&
+        && \text{Orthonormal matrix of posture modes} \\
+    \nu_m, \nu_U &\in \RR &&
+        && \text{Prior standard deviation for centroid and} \\
+    &&& && \quad\text{mode adjustments, respectively}
+\end{align*}
+and a tuple $\phi_n = (\hat{m}_n, \hat{U}_n)$ of trainable parameters, for which we now also specify priors:
+\begin{align*}
+    \hat{m}_n &\in \RR^{KD} && \sim \NN(\mathbf{0}_{KD}, \nu_{m} I_{KD})  
+        && \text{Session-wise adjustments to centroid pose} \\
+    \hat{U}_n&\in \RR^{L\times KD} &&\sim \NN(\mathbf{0}_{LKD}, \nu_{U} I_{LKD})
+        && \text{Session-wise adjustments to posture modes}
+\end{align*}
+We may now write down a mapping of poses for low rank affine morph. We use the projection onto orthogonal complement of $U$'s columns as a pass-through on the dimensions of pose space beyond the first $L$ PCs. Since $U$ is a tall matrix with orthogonal columns, this projection takes the particularly simple form $U^\perp = I - UU^T$. Using this, we may write
+\begin{align}
+    f(x, \phi_n) &= \pn{U + \hat{U}_n} U^T (x - m) + U^\perp (x - m) + (m + \hat{m}_n) \\
+    &= \bc{I + \hat{U}_n U^T} (x - m) + (m + \hat{m}_n) 
+\end{align}
+The inverse of this map in its first argument is simply
+\begin{align}
+    f\inv(x, \phi_n) = \bc{ I + \hat{U}_n U^T }\inv (x - (m + \hat{m}_n)) + m
+\end{align}
+
+
+
+
+\section{E-step}
+
+In the E-step we seek to calculate $q_{n, t}(z) = P(z\mid y_{n, t},\,\theta^*)$ for a given keypoint observation $y_{n, t}$ and estimated parameters $\theta^*$. This is usually done using Bayes' rule
+\begin{align}
+    q_{n,t}(z) = P(z\mid y_{n, t}, \theta^*) = \frac{P(y_{n, t}\mid z,\,\theta^*)P(z\mid \theta^*)}{\sum_{z'} P(y_{n, t}\mid z',\,\theta^*)P(z'\mid \theta^*)}
+\end{align}
+Each probability above is given directly by the generative model (Sec \ref{sec:gen-model}), and so may be expanded as
+\begin{align}
+    q_{n,t}(z) = \frac{ \NN(f^{-1}(y_{n,t}, \phi^*_n) \mid m_{z}^*, Q_{z}^*) \cdot \pi_{n,z}^* }{ \sum_{z'} \NN(f^{-1}(y_{n,t}, \phi^*_n) \mid m_{z'}^*, Q_{z'}^*) \cdot \pi_{n,z'}^* }
+\end{align}
+which yields the proportionality result stated in Eq. \ref{eq:q-propto-statement} with the additional specification of normalization so that $q_{n,t}$ is a probability distribution in $z$.
+
+
+\end{document}
