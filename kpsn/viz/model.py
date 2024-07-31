@@ -32,6 +32,7 @@ from ..models.instantiation import get_model
 from ..fitting.scans import merge_param_hist_with_hyperparams
 
 import jax.numpy as jnp
+import itertools as iit
 from pathlib import Path
 import numpy as np
 import jax.numpy.linalg as jla
@@ -168,14 +169,15 @@ def lra_centroid_and_modes(
     sbtl = colors.subtle
     mode_scale = 10
     i_body = 0
-    for body_id, body in _optional_pbar(dataset._body_names.items(), progress):
+    for body in _optional_pbar(dataset.bodies, progress):
+        body_id = dataset.body_id(body)
         if body not in body_whitelist:
             continue
         ax[0, i_body].set_title(body)
         for i_row, row_y in enumerate([2, 1]):
             # -- plot centroid
             ctr = params.offset + params.offset_updates[body_id]
-            ref = f"{dataset.ref_session}\n(ref)"
+            ref = f"{dataset.session_name(dataset.ref_session)}\n(ref)"
             _plot(i_row, i_body, ctr, row_y, pal[body])
             ax[0, 0].set_ylabel("centroid")
             if i_body != params.ref_body:
@@ -216,6 +218,7 @@ def lra_param_convergence(
     colors: colorset = None,
     stepsize=1,
     progress=False,
+    magnitude_only=False,
     first_step=0,
 ):
     if colors is None:
@@ -229,21 +232,105 @@ def lra_param_convergence(
         model, checkpoint["params"], checkpoint["meta"]["param_hist"]
     )
 
-    # hacky: param_hist.ref_body becomes an array, but will be used in .at[].set
+    # hacky: param_hist.ref_body is an array, but will be used in .at[].set
     # so we would prefer it be a scalar
     param_hist.morph._tree["ref_body"] = param_hist.morph.ref_body[0]
 
-    step = jnp.concatenate(
+    steps = jnp.concatenate(
         [
             jnp.array([0]),
             checkpoint["meta"].get(
                 "gd_step", np.arange(1, len(param_hist.morph.offset_updates))
             ),
         ]
-    )[first_step::stepsize]
+    )
     n_bodies = int(param_hist.morph.n_bodies[0])
     n_dims = int(param_hist.morph.n_dims[0])
-    pal = colors.make("Spectral")(n_bodies)
+
+    if magnitude_only:
+        fn = _lra_param_convergence_magnitues
+    else:
+        fn = _lra_param_convergence_values
+
+    return fn(
+        dataset,
+        param_hist,
+        n_bodies,
+        n_dims,
+        first_step,
+        stepsize,
+        steps,
+        progress,
+        colors,
+    )
+
+
+def _lra_param_convergence_magnitues(
+    dataset,
+    param_hist,
+    n_bodies,
+    n_dims,
+    first_step,
+    stepsize,
+    grad_steps,
+    progress,
+    colors,
+):
+    """Helper function to `lra_param_convergence` for `magnitude_only` mode in
+    which only one axis is used."""
+    fig, ax = plt.subplots(1, 2, figsize=(8, 3), sharex=True)
+    pal = colors.make("Spectral")(n_dims + 1)
+    for i_body in _optional_pbar(range(n_bodies), progress):
+        if i_body == param_hist.morph.ref_body:
+            continue
+        for i_dim, (upds, label) in enumerate(
+            iit.chain(
+                zip(
+                    param_hist.morph.mode_updates[:, i_body].transpose(2, 0, 1),
+                    [f"Mode {i}" for i in range(n_dims)],
+                ),
+                [(param_hist.morph.offset_updates[:, i_body], "Centroid")],
+            )
+        ):
+            magnitudes = jla.norm(np.diff(upds, axis=0), axis=-1)
+            z_upd = (upds - upds.mean(axis=0, keepdims=True)) / upds.std(
+                axis=0, keepdims=True
+            )
+            ax[1].plot(
+                grad_steps[1:][first_step::stepsize],
+                magnitudes[first_step::stepsize],
+                color=pal[i_dim],
+                lw=0.5,
+                label=label if i_body == 0 else None,
+            )
+            ax[0].plot(
+                grad_steps[first_step::stepsize],
+                z_upd[first_step::stepsize],
+                color=pal[i_dim],
+                lw=0.1,
+                label=label if i_body == 0 else None,
+            )
+    ax[1].set_ylabel("Update magnitude")
+    ax[0].set_ylabel("Parameter value [normalized]")
+    ax[0].set_xlabel("iteration [gradient steps]")
+    legend(ax[1])
+    return fig
+
+
+def _lra_param_convergence_values(
+    dataset,
+    param_hist,
+    n_bodies,
+    n_dims,
+    first_step,
+    stepsize,
+    grad_steps,
+    progress,
+    colors,
+):
+    """Helper function to `lra_param_convergence` for standard mode in which
+    each anchor pose and body are plotted on separate axes."""
+
     fig, ax = plt.subplots(
         n_dims + 1,
         n_bodies - 1,
@@ -253,13 +340,14 @@ def lra_param_convergence(
     )
     ax = np.atleast_2d(ax.T).T
     i_ax = 0
+    pal = colors.make("Spectral")(n_bodies)
     for i_body in _optional_pbar(range(n_bodies), progress):
         if i_body == param_hist.morph.ref_body:
             continue
         for i_mode in range(n_dims):
             upds = param_hist.morph.mode_updates[:, i_body, :, i_mode]
             ax[i_mode, i_ax].plot(
-                step,
+                grad_steps[first_step::stepsize],
                 upds[first_step::stepsize],
                 color=pal[i_body],
                 lw=0.5,
@@ -269,7 +357,10 @@ def lra_param_convergence(
             ax[i_mode, 0].set_ylabel(f"pc {i_mode}")
         upds = param_hist.morph.offset_updates[:, i_body, :]
         ax[-1, i_ax].plot(
-            step, upds[first_step::stepsize], color=pal[i_body], lw=0.5
+            grad_steps[first_step::stepsize],
+            upds[first_step::stepsize],
+            color=pal[i_body],
+            lw=0.5,
         )
         i_ax += 1
 
@@ -350,6 +441,7 @@ def gmm_param_convergence(
     colors: colorset = None,
     stepsize=1,
     progress=False,
+    magnitude_only=False,
     first_step=0,
 ):
     if colors is None:
@@ -370,7 +462,88 @@ def gmm_param_convergence(
                 "gd_step", np.arange(1, len(param_hist.pose.subj_weights))
             ),
         ]
-    )[first_step::stepsize]
+    )
+
+    if magnitude_only:
+        fn = _gmm_param_convergence_magnitues
+    else:
+        fn = _gmm_param_convergence_values
+
+    return fn(
+        dataset,
+        param_hist,
+        n_sessions,
+        n_components,
+        first_step,
+        stepsize,
+        step,
+        progress,
+        colors,
+    )
+
+
+def _gmm_param_convergence_magnitues(
+    dataset,
+    param_hist,
+    n_sessions,
+    n_components,
+    first_step,
+    stepsize,
+    grad_steps,
+    progress,
+    colors,
+):
+    """Helper function to `gmm_param_convergence` for `magnitude_only` mode in
+    which only one axis is used."""
+    fig, ax = plt.subplots(2, 2, figsize=(8, 5), sharex=True)
+    pal = colors.make("Spectral")(n_components)
+    for i_comp, (means, weights, label) in enumerate(
+            zip(
+                param_hist.pose.means.transpose(1, 0, 2),
+                param_hist.pose.subj_weights.transpose(2, 0, 1),
+                [f"Component {i}" for i in range(n_components)],
+            ),
+    ):
+        for i_row, param in enumerate([means, weights]):
+            magnitudes = jla.norm(np.diff(param, axis=0), axis=-1)
+            param = (param - param.mean(axis=0, keepdims=True)) / param.std(
+                axis=0, keepdims=True
+            )
+            ax[i_row, 1].plot(
+                grad_steps[1:][first_step::stepsize],
+                magnitudes[first_step::stepsize],
+                color=pal[i_comp],
+                lw=0.5,
+                label=label,
+            )
+            ax[i_row, 0].plot(
+                grad_steps[first_step::stepsize],
+                param[first_step::stepsize],
+                color=pal[i_comp],
+                lw=0.5,
+                label=label,
+            )
+    ax[0, 1].set_ylabel("Update magnitude")
+    ax[0, 0].set_ylabel("Parameter value [normalized]\nMean")
+    ax[1, 0].set_ylabel("Weight")
+    ax[1, 0].set_xlabel("iteration [gradient steps]")
+    legend(ax[0, 1])
+    return fig
+
+
+def _gmm_param_convergence_values(
+    dataset,
+    param_hist,
+    n_sessions,
+    n_components,
+    first_step,
+    stepsize,
+    grad_steps,
+    progress,
+    colors,
+):
+    """Helper function to `gmm_param_convergence` for standard mode in which
+    each pose component and session are plotted on separate axes."""
     pal = colors.make("Spectral")(n_sessions)
     fig, ax = plt.subplots(
         n_components,
@@ -382,12 +555,17 @@ def gmm_param_convergence(
         means = param_hist.pose.means[..., i_comp, :]
         for i_sess in range(n_sessions):
             ax[i_comp, i_sess].plot(
-                step, weights[first_step::stepsize, i_sess], color=pal[i_sess]
+                grad_steps[first_step::stepsize],
+                weights[first_step::stepsize, i_sess],
+                color=pal[i_sess],
             )
             ax[i_comp, i_sess].set_ylim(0, param_hist.pose.subj_weights.max())
             ax[0, i_sess].set_title(dataset.session_name(i_sess))
         ax[i_comp, -1].plot(
-            step, means[first_step::stepsize], color=colors.neutral, lw=0.5
+            grad_steps[first_step::stepsize],
+            means[first_step::stepsize],
+            color=colors.neutral,
+            lw=0.5,
         )
         ax[i_comp, 0].set_ylabel(f"comp {i_comp}")
     ax[0, -1].set_title("Mean")
@@ -427,12 +605,8 @@ def gmm_components(
     ax.set_xticks(range(len(dataset.sessions)))
     ax.set_xticklabels(
         [
-            (
-                "(ref) "
-                if dataset.session_name(i) == dataset.ref_session
-                else ""
-            )
-            + dataset._session_names[i]
+            ("(ref) " if dataset.session_name(i) == dataset.ref_session else "")
+            + dataset.session_name(i)
             for i in range(len(dataset.sessions))
         ],
         rotation=80,

@@ -194,8 +194,8 @@ class GMMParams(PoseModelParams):
     pop_weight_logits: Float[Array, "n_components"] = _getter(
         "pop_weight_logits"
     )
-    means: Float[Array, "n_sessions n_feats"] = _getter("means")
-    cholesky: Float[Array, "n_sessions n_feats**2/2+n_feats/2"] = _getter(
+    means: Float[Array, "n_components n_feats"] = _getter("means")
+    cholesky: Float[Array, "n_components n_feats**2/2+n_feats/2"] = _getter(
         "cholesky"
     )
 
