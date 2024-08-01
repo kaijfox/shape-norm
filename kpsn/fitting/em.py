@@ -607,19 +607,21 @@ def _prepare_for_iteration(
         batch_rkey_seed = None
         generate_batch = None
 
-    save_with_status = lambda status, step_i: _save_checkpoint(
-        checkpoint_dir,
-        dict(
-            params=curr_params,
-            meta=meta,
-            step=step_i,
-            status=status,
-            sessions={
-                "metadata": observations._session_meta,
-                "reference": observations.ref_session,
-            },
-            **checkpoint_extra,
-        ),
+    save_with_status = (
+        lambda status, curr_params, meta, step_i: _save_checkpoint(
+            checkpoint_dir,
+            dict(
+                params=curr_params,
+                meta=meta,
+                step=step_i,
+                status=status,
+                sessions={
+                    "metadata": observations._session_meta,
+                    "reference": observations.ref_session,
+                },
+                **checkpoint_extra,
+            ),
+        )
     )
     curr_params = JointModelParams.from_types(
         model, static, hyper, curr_trained
@@ -787,7 +789,7 @@ def _em_poststep(
         logging.info(f"Step {step_i} : loss = {meta['loss'][step_i]}")
 
     if (checkpoint_every > 0) and (step_i % checkpoint_every == 0):
-        save_with_status("in_progress", step_i)
+        save_with_status("in_progress", curr_params, meta, step_i)
 
     # evaluate early stopping and divergence
     converged = _check_should_stop_early(
@@ -797,12 +799,12 @@ def _em_poststep(
     if converged:
         meta["loss"] = meta["loss"][: step_i + 1]
         logging.info("Stopping due to early convergence or divergence.")
-        save_with_status("finished.early_stop", step_i)
+        save_with_status("finished.early_stop", curr_params, meta, step_i)
         should_break = True
     if not jnp.isfinite(meta["loss"][step_i]):
         meta["loss"] = meta["loss"][: step_i + 1]
         logging.warning("Stopping, diverged.")
-        save_with_status("finished.diverged", step_i)
+        save_with_status("finished.diverged", curr_params, meta, step_i)
         should_break = True
 
     end_walltime = walltime + (time.time() - step_start_time)
@@ -921,5 +923,8 @@ def iterate_em(
         if should_break:
             break
 
-    final_ckpt = save_with_status("finished", step_i)
+    curr_params = JointModelParams.from_types(
+        model, static, hyper, curr_trained
+    )
+    final_ckpt = save_with_status("finished", curr_params, meta, step_i)
     return final_ckpt
