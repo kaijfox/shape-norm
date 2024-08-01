@@ -10,7 +10,7 @@ import os
 
 class Project:
     def __init__(self, project_dir):
-        self.project_dir = Path(project_dir)
+        self.project_dir = Path(project_dir).absolute().resolve()
 
     def root(self):
         return self.project_dir
@@ -80,6 +80,8 @@ def create_model(
             config = load_model_config(project.base_model_config())
         # override project location with relative path
         proj_cfg = Path(config["project"])
+        if not proj_cfg.is_absolute():
+            proj_cfg = (config_path / proj_cfg).resolve()
         pfx = Path(os.path.commonpath([proj_cfg, model_dir])).parts
         project_override = str(
             Path("../" * (len(model_dir.parts) - len(pfx)))

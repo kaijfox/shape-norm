@@ -41,7 +41,7 @@ def _align_scales(dataset: Dataset, config):
     return scaled, scales
 
 
-def _inverse_align_scales(dataset: Dataset, scales: np.ndarray, stacked = False):
+def _inverse_align_scales(dataset: Dataset, scales: np.ndarray, stacked=False):
     """Invert `_align_scales`.
 
     Parameters
@@ -60,8 +60,8 @@ def _inverse_align_scales(dataset: Dataset, scales: np.ndarray, stacked = False)
         scales = scales[dataset.stack_session_ids, None, None]
     else:
         scales = scales[:, None, None]
-    
-    if hasattr(dataset, "from_arrays"):    
+
+    if hasattr(dataset, "from_arrays"):
         return dataset.update(data=dataset.data * scales)
     else:
         return dataset * scales
@@ -218,8 +218,42 @@ class sagittal(AlignmentMethod):
         ), "Must set `rescale` to specify whether or not to rescale sessions."
 
 
+class no_alignment(AlignmentMethod):
+    type_name = "none"
+
+    @staticmethod
+    def _align(dataset: Dataset, config):
+        return dataset, {}
+
+    @staticmethod
+    def _inverse(dataset: Dataset, align_meta: dict, config: dict):
+        return dataset
+
+    defaults = dict()
+
+    @staticmethod
+    def calibrate(
+        dataset: Dataset,
+        full_config: dict,
+    ):
+        return dataset, full_config
+
+    @staticmethod
+    def plot_calibration(project: Project, config: dict, colors=None):
+        return None
+
+    @staticmethod
+    def _setup_config(config: dict):
+        pass
+
+    @staticmethod
+    def _validate_config(config: dict):
+        pass
+
+
 alignment_types = {
     sagittal.type_name: sagittal,
+    no_alignment.type_name: no_alignment,
 }
 default_alignment_type = "sagittal"
 

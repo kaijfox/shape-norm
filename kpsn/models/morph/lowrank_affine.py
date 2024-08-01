@@ -51,6 +51,13 @@ def calibrate_base_model(dataset: Dataset, config, n_dims=None):
     else:
         selected_ix = n_dims - 1
 
+    # save results of PCA in config and calibration
+    config["n_dims"] = int(selected_ix) + 1
+    config["calibration_data"] = dict(
+        variance_explained=scree,
+        n_dims=selected_ix,
+    )
+
     if config["prior_mode"] == "params":
         # variance of each component in feature space
         mean_vars = jnp.var(
@@ -61,16 +68,10 @@ def calibrate_base_model(dataset: Dataset, config, n_dims=None):
         )
         config["upd_var_ofs"] = float(mean_vars.mean())
         config["upd_var_modes"] = 0.1
+        config["calibration_data"]["mean_variances_by_dim"] = mean_vars
+
     else:
         config["dist_var"] = 1.0
-
-    # set config and save calculated calibration
-    config["n_dims"] = int(selected_ix) + 1
-    config["calibration_data"] = dict(
-        variance_explained=scree,
-        n_dims=selected_ix,
-        mean_variances_by_dim=mean_vars,
-    )
 
     return full_config
 
@@ -91,7 +92,9 @@ def plot_calibration(config: dict, colors):
     selected_ix = calibration_data["n_dims"]
     cumsum = calibration_data["variance_explained"]
 
-    fig, ax = scree(cumsum, selected_ix, config["calibration"]["tgt_variance"])
+    fig, ax = scree(
+        cumsum, selected_ix + 1, config["calibration"]["tgt_variance"]
+    )
     ax.set_title("Morph model dimension selection")
 
     return fig
