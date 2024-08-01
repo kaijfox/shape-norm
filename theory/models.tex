@@ -62,7 +62,7 @@ The goal of shape normalization is to map keypoint observations from many animal
 
 \subsection{Input data}
 
-We consider a dataset of poses $\{y_{n,t}\} \subset \mathbb{R}^{KD}$ measured from animals $n=1,\dots,N$ at timepoints $t=1,\dots,T_n$ (the timepoints need not be sequential), where each pose contains coordinates of $K$ keypoints in $D$ dimensions. We assume that the keypoints are already centered and rotationally aligned, and that differences in body size have already been minimized as much as possible through uniform scaling of each animal. 
+Input data consist of keypoints from $N$ animals measured at $T_n$ timepoints (the timepoints need not be sequential). Before modeling, the keypoints are preprocessed by (1) centering and rotational alignment; (2) uniform scaling based on average inter-keypoint distances; (3) low-dimensional embedding using principal components analysis (denote the embedding dimension as $D$). Together, these steps yield a set of low-dimensional poses $y_{n,t} \in \mathbb{R}^D$ for animals $n$ and timepoints $t$. 
 
 \subsection{Generative model}
 \label{sec:gen-model}
@@ -86,9 +86,23 @@ We model each pose $y_{n,t}$ as the animal-specific realization of a standardize
         && \text{(prior on mixture weight hyperparameters)}
 \end{align*}   
 %
-where $f$ is a morph function that maps standardized poses $x_{n,t}$ to animal-specific poses $y_{n,t}$ and $\phi_n$ is a parameter vector that captures the unique shape of animal $n$. Several forms for $f$ (and priors on $\phi_n$) are described in Section XXX and tested in the paper. In general, $f$ should be invertible in its first argument and differentiable in its second. Abusing notation, we will use $f^{-1}$ to denote the inverse of $f$ in its first argument.
+where $f$ is a morph function that maps standardized poses $x_{n,t}$ to animal-specific poses $y_{n,t}$ and $\phi_n$ is a parameter vector that captures the unique shape of animal $n$. The specific morph function used in this paper is described below. In principle, any morph function $f$ could be used as long as it is invertible in its first argument and differentiable in its second. Abusing notation, we will use $f^{-1}$ to denote the inverse of $f$ in its first argument.
 
 
+\subsection{Morph function} \label{morph}
+
+We use an affine transformation for the morph $f$. To avoid degeneracy and promote interpretability, one animal (say $n=0$) is defined as a ``reference'' and its morph is fixed as the identity. Morphs for the remaining animals can then be thought of as perturbations of the reference. For clarity, these perturbations are written below as the combination (1) an additive perturbation to the reference animal's mean pose and (2) a linear perturbation to residuals around the mean pose. To limit degrees of freedom (and thus prevent over-fitting), these perturbations are restricted to the top $L$ principal components of pose space (where $L \le D$). The bottom $D-L$ components are preserved without modification. Thus, for each animal $n > 0$, the morph parameters $\phi_n$ consist of a matrix $U_n \in \mathbb{R}^{L \times L}$ and a vector $v_n \in \mathbb{R}^L$ that act on poses $x \in \mathbb{R}^D$ as follows:
+%
+\begin{align}
+    f(x, (U_n, v_n)): x \mapsto 
+    \begin{bmatrix} U_n & \mathbf{0} \\ \mathbf{0} & I_{D-L} \end{bmatrix}
+    (x - \bar{x}) + 
+    \begin{bmatrix} v_n & \mathbf{0}_{D-L}\end{bmatrix} + \bar{x}
+\end{align}
+%
+where $\bar{x}$ is the mean pose of the refernece animal.
+
+\section{Inference}
 
 \subsection{Expectation maximization}
 \label{sec:em-general}
@@ -123,45 +137,9 @@ Initialization of the morph parameters $\phi$ is described in section XXX. Given
     \pi_{n,z} = \frac{1}{T_n} \sum_{t=1}^{T_n} \lambda_{n,t,z}, \quad \beta_z = \frac{1}{N} \sum_{n=1}^N \pi_{n,z}
 \end{align}
 
-\section{Morph models}
-
-\subsection{Low-rank affine morph}
-
-One way to enforce simplicity $f(x, \phi)$ is to make it an affine map in $x$. However, because $x\in\RR^{KD}$ is rather high dimensional, this still leaves a huge number of degrees of freedom. We therefore also enforce in this morph model that the linear component of $f$ be low-rank.
-
-The main adjustment of posture will be performed by the affine offset. For example, this might set certain bone lengths to be longer for a particular session. It is unlikely that these updates will be sufficient across all poses however - e.g. when limbs are extended in 2D keypoints the bone lengths adjustments need to be greater, or in 3D keypoints the updated needed to extend bone lengths during a rear are different from those needed during running. We therefore also add an update to the first $L$ PCs (``modes''), inferred from a reference session and fixed during training.
-
-The morph function described above may be formulated in terms of the following hyperparameters:
-\begin{align*}
-    m&\in \RR^{KD} &&
-        && \text{Centroid of population pose space} \\
-    U&\in \RR^{L\times KD} &&
-        && \text{Orthonormal matrix of posture modes} \\
-    \nu_m, \nu_U &\in \RR &&
-        && \text{Prior standard deviation for centroid and} \\
-    &&& && \quad\text{mode adjustments, respectively}
-\end{align*}
-and a tuple $\phi_n = (\hat{m}_n, \hat{U}_n)$ of trainable parameters, for which we now also specify priors:
-\begin{align*}
-    \hat{m}_n &\in \RR^{KD} && \sim \NN(\mathbf{0}_{KD}, \nu_{m} I_{KD})  
-        && \text{Session-wise adjustments to centroid pose} \\
-    \hat{U}_n&\in \RR^{L\times KD} &&\sim \NN(\mathbf{0}_{LKD}, \nu_{U} I_{LKD})
-        && \text{Session-wise adjustments to posture modes}
-\end{align*}
-We may now write down a mapping of poses for low rank affine morph. We use the projection onto orthogonal complement of $U$'s columns as a pass-through on the dimensions of pose space beyond the first $L$ PCs. Since $U$ is a tall matrix with orthogonal columns, this projection takes the particularly simple form $U^\perp = I - UU^T$. Using this, we may write
-\begin{align}
-    f(x, \phi_n) &= \pn{U + \hat{U}_n} U^T (x - m) + U^\perp (x - m) + (m + \hat{m}_n) \\
-    &= \bc{I + \hat{U}_n U^T} (x - m) + (m + \hat{m}_n) 
-\end{align}
-The inverse of this map in its first argument is simply
-\begin{align}
-    f\inv(x, \phi_n) = \bc{ I + \hat{U}_n U^T }\inv (x - (m + \hat{m}_n)) + m
-\end{align}
 
 
-
-
-\section{E-step}
+\subsection{E-step details}
 
 In the E-step we seek to calculate $q_{n, t}(z) = P(z\mid y_{n, t},\,\theta^*)$ for a given keypoint observation $y_{n, t}$ and estimated parameters $\theta^*$. This is usually done using Bayes' rule
 \begin{align}
