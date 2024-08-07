@@ -40,7 +40,9 @@ defaults = dict(
 )
 
 
-def calibrate_base_model(dataset: Dataset, config: dict, n_components=None):
+def calibrate_base_model(
+    dataset: Dataset, config: dict, n_components=None, wishart=True
+):
     """
     Calibrate a pose model on a dataset.
 
@@ -50,6 +52,8 @@ def calibrate_base_model(dataset: Dataset, config: dict, n_components=None):
         Full model and project config.
     n_components : int
         Do not run BIC analysis to select number of components.
+    wishart : bool
+        Set up a wishart prior on the covariance matrix.
     """
 
     full_config = config
@@ -98,8 +102,12 @@ def calibrate_base_model(dataset: Dataset, config: dict, n_components=None):
 
     # update configs
     config["n_components"] = int(ns[selected_ix])
-    config["wish_var"] = float(jnp.var(init_pts, axis=0).mean() / selected_n)
-    config["wish_dof"] = float(20.0 + dataset.data.shape[-1])
+    if not isinstance(config.get("wish_var", None), float) and wishart:
+        config["wish_var"] = float(
+            jnp.var(init_pts, axis=0).mean() / selected_n
+        )
+    if not isinstance(config.get("wish_dof", None), (float, int)) and wishart:
+        config["wish_dof"] = float(20.0 + dataset.data.shape[-1])
 
     return full_config
 
@@ -221,7 +229,7 @@ class GMMParams(PoseModelParams):
     # --- derived parameters
 
     @property
-    def covariances(self) -> Float32[Array, "L M M"]:
+    def covariances(self) -> Float32[Array, "*#K L M M"]:
         covs = expand_tril_cholesky(self.cholesky, n=self.n_feats)
         # addition of diagonal before extracting cholesky
         if self.diag_eps is not None:
@@ -230,7 +238,7 @@ class GMMParams(PoseModelParams):
         return covs
 
     @property
-    def subj_weights(self) -> Float[Array, "N L"]:
+    def subj_weights(self) -> Float[Array, "*#K N L"]:
         logits = self.subj_weight_logits
         centered = logits - logits.mean(axis=-1)[..., None]
         logit_max = jnp.array(self.logit_max)[
@@ -240,7 +248,7 @@ class GMMParams(PoseModelParams):
         return jnn.softmax(saturated, axis=-1)
 
     @property
-    def pop_weights(self) -> Float[Array, "L"]:
+    def pop_weights(self) -> Float[Array, "*#K L"]:
         logits = self.pop_weight_logits
         centered = logits - logits.mean(axis=-1)[..., None]
         logit_max = jnp.array(self.logit_max)[
@@ -308,8 +316,8 @@ def init_hyperparams(poses: Dataset, config: dict) -> GMMParams:
             n_sessions=poses.n_sessions,
             n_feats=poses.data.shape[-1],
             ref_session=poses.ref_session,
-            wish_var=float(wish_var),
-            wish_dof=float(wish_dof),
+            wish_var=float(wish_var) if wish_var is not None else None,
+            wish_dof=float(wish_dof) if wish_var is not None else None,
             **get_entries(
                 config,
                 [

@@ -129,7 +129,12 @@ def _keypoint_names_config(
             ]
     # armature as dictionary
     if not isinstance(keypoint_parents, dict):
-        keypoint_parents = dict(zip(use_keypoints, keypoint_parents))
+        keypoint_parents = dict(zip(keypoint_names, keypoint_parents))
+        keypoint_parents = {
+            c: p
+            for c, p in keypoint_parents.items()
+            if c in use_keypoints and (p in use_keypoints or p is None)
+        }
     else:
         keypoint_parents = {
             c: p for c, p in keypoint_parents.items() if c in use_keypoints
