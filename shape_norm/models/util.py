@@ -272,6 +272,9 @@ def reconst_errs(kpts_a, kpts_b, average=True):
     ----------
     kpts_a, kpts_b : array shape (n_frame, n_keypoints, n_spatial)
         Array of keypoints, such as a session from a Dataset.
+    average : bool, optional
+        If True, return the mean distance between keypoints over all frames and
+        keypoints. Otherwise return framewise and keypoint-wise distances.
     """
     if average:
         return jla.norm(kpts_a - kpts_b, axis=-1).mean(axis=0)

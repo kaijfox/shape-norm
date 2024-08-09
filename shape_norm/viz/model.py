@@ -9,6 +9,7 @@ from .util import (
     flat_grid,
     select_frame_gallery,
     stack_lines,
+    unique_handles,
 )
 from .videos import (
     load_videos,
@@ -43,12 +44,16 @@ import tqdm
 import cv2
 
 
-def report_plots(checkpoint, n_col=5, first_step=0, colors: colorset = None):
+def report_plots(
+    checkpoint, n_col=5, first_step=0, colors: colorset = None, ax_size=(3, 2)
+):
     if colors is None:
         colors = colorset.active
     reports: ArrayTrace = checkpoint["meta"]["reports"]
     n_row = int(jnp.ceil(reports.n_leaves() / n_col))
-    fig, ax = plt.subplots(n_row, n_col, figsize=(3 * n_col, 2 * n_row))
+    fig, ax = plt.subplots(
+        n_row, n_col, figsize=(ax_size[0] * n_col, ax_size[1] * n_row)
+    )
     reports.plot(
         ax.ravel()[: reports.n_leaves()],
         color=colors.neutral,
@@ -220,6 +225,9 @@ def lra_param_convergence(
     progress=False,
     magnitude_only=False,
     first_step=0,
+    normalize=True,
+    ax_size=None,
+    legend=True,
 ):
     if colors is None:
         colors = colorset.active
@@ -262,6 +270,9 @@ def lra_param_convergence(
         steps,
         progress,
         colors,
+        normalize,
+        ax_size,
+        make_legend=legend,
     )
 
 
@@ -275,11 +286,18 @@ def _lra_param_convergence_magnitues(
     grad_steps,
     progress,
     colors,
+    normalize=True,
+    ax_size=None,
+    make_legend=True,
 ):
     """Helper function to `lra_param_convergence` for `magnitude_only` mode in
     which only one axis is used."""
-    fig, ax = plt.subplots(1, 2, figsize=(8, 3), sharex=True)
-    pal = colors.make("Spectral")(n_dims + 1)
+    if ax_size is None:
+        ax_size = (4, 3)
+    fig, ax = plt.subplots(
+        1, 2, figsize=(ax_size[0] * 2 + 1, ax_size[1]), sharex=True
+    )
+    pal = colors.make("turbo")(n_dims + 1)
     for i_body in _optional_pbar(range(n_bodies), progress):
         if i_body == param_hist.morph.ref_body:
             continue
@@ -293,27 +311,34 @@ def _lra_param_convergence_magnitues(
             )
         ):
             magnitudes = jla.norm(np.diff(upds, axis=0), axis=-1)
-            z_upd = (upds - upds.mean(axis=0, keepdims=True)) / upds.std(
-                axis=0, keepdims=True
-            )
+            if normalize:
+                z_upd = (upds - upds.mean(axis=0, keepdims=True)) / upds.std(
+                    axis=0, keepdims=True
+                )
+            else:
+                z_upd = upds
             ax[1].plot(
                 grad_steps[1:][first_step::stepsize],
                 magnitudes[first_step::stepsize],
                 color=pal[i_dim],
                 lw=0.5,
-                label=label if i_body == 0 else None,
+                label=label,
             )
             ax[0].plot(
                 grad_steps[first_step::stepsize],
                 z_upd[first_step::stepsize],
                 color=pal[i_dim],
-                lw=0.1,
-                label=label if i_body == 0 else None,
+                lw=0.5,
+                label=label,
             )
     ax[1].set_ylabel("Update magnitude")
-    ax[0].set_ylabel("Parameter value [normalized]")
+    if normalize:
+        ax[0].set_ylabel("Parameter value [normalized]")
+    else:
+        ax[0].set_ylabel("Parameter value")
     ax[0].set_xlabel("iteration [gradient steps]")
-    legend(ax[1])
+    if make_legend:
+        legend(ax[1], unique_handles(ax[1]))
     return fig
 
 
@@ -327,14 +352,18 @@ def _lra_param_convergence_values(
     grad_steps,
     progress,
     colors,
+    normalize=None,
+    ax_size=None,
+    make_legend=True,
 ):
     """Helper function to `lra_param_convergence` for standard mode in which
     each anchor pose and body are plotted on separate axes."""
-
+    if ax_size is None:
+        ax_size = (1.5, 1.5)
     fig, ax = plt.subplots(
         n_dims + 1,
         n_bodies - 1,
-        figsize=(n_bodies * 1.5, n_dims * 1.5 + 1.5),
+        figsize=(n_bodies * ax_size[0], (n_dims + 1) * ax_size[1]),
         sharex=True,
         sharey="row",
     )
@@ -443,6 +472,8 @@ def gmm_param_convergence(
     progress=False,
     magnitude_only=False,
     first_step=0,
+    normalize=True,
+    ax_size=None,
 ):
     if colors is None:
         colors = colorset.active
@@ -479,6 +510,8 @@ def gmm_param_convergence(
         step,
         progress,
         colors,
+        normalize,
+        ax_size,
     )
 
 
@@ -492,23 +525,30 @@ def _gmm_param_convergence_magnitues(
     grad_steps,
     progress,
     colors,
+    normalize=True,
+    ax_size=None,
 ):
     """Helper function to `gmm_param_convergence` for `magnitude_only` mode in
     which only one axis is used."""
-    fig, ax = plt.subplots(2, 2, figsize=(8, 5), sharex=True)
-    pal = colors.make("Spectral")(n_components)
+    if ax_size is None:
+        ax_size = (4, 3)
+    fig, ax = plt.subplots(
+        2, 2, figsize=(2 * ax_size[0] + 1, ax_size[1]), sharex=True
+    )
+    pal = colors.make("turbo")(n_components)
     for i_comp, (means, weights, label) in enumerate(
-            zip(
-                param_hist.pose.means.transpose(1, 0, 2),
-                param_hist.pose.subj_weights.transpose(2, 0, 1),
-                [f"Component {i}" for i in range(n_components)],
-            ),
+        zip(
+            param_hist.pose.means.transpose(1, 0, 2),
+            param_hist.pose.subj_weights.transpose(2, 0, 1),
+            [f"Component {i}" for i in range(n_components)],
+        ),
     ):
         for i_row, param in enumerate([means, weights]):
             magnitudes = jla.norm(np.diff(param, axis=0), axis=-1)
-            param = (param - param.mean(axis=0, keepdims=True)) / param.std(
-                axis=0, keepdims=True
-            )
+            if normalize:
+                param = (param - param.mean(axis=0, keepdims=True)) / param.std(
+                    axis=0, keepdims=True
+                )
             ax[i_row, 1].plot(
                 grad_steps[1:][first_step::stepsize],
                 magnitudes[first_step::stepsize],
@@ -524,7 +564,10 @@ def _gmm_param_convergence_magnitues(
                 label=label,
             )
     ax[0, 1].set_ylabel("Update magnitude")
-    ax[0, 0].set_ylabel("Parameter value [normalized]\nMean")
+    if normalize:
+        ax[0, 0].set_ylabel("Parameter value [normalized]\nMean")
+    else:
+        ax[0, 0].set_ylabel("Parameter value\nMean")
     ax[1, 0].set_ylabel("Weight")
     ax[1, 0].set_xlabel("iteration [gradient steps]")
     legend(ax[0, 1])
@@ -541,15 +584,21 @@ def _gmm_param_convergence_values(
     grad_steps,
     progress,
     colors,
+    normalize=None,
+    ax_size=None,
 ):
     """Helper function to `gmm_param_convergence` for standard mode in which
     each pose component and session are plotted on separate axes."""
     pal = colors.make("Spectral")(n_sessions)
+    if ax_size is None:
+        ax_size = (1.5, 1.5)
     fig, ax = plt.subplots(
         n_components,
         n_sessions + 1,
-        figsize=(1.5 * n_sessions + 1.5, 1.5 * n_components),
+        figsize=(ax_size[0] * (n_sessions + 1), ax_size[1] * n_components),
     )
+    if n_components == 1:
+        ax = ax[None, :]
     for i_comp in _optional_pbar(range(n_components), progress):
         weights = param_hist.pose.subj_weights[..., i_comp]
         means = param_hist.pose.means[..., i_comp, :]
