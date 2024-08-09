@@ -512,6 +512,7 @@ class arrays(DatasetLoader):
         posterior=None,
         invert_axes=None,
         subsample=None,
+        subsample_to=None,
         alignment_type=None,
         feature_type=None,
     ):
@@ -567,6 +568,7 @@ class arrays(DatasetLoader):
         dataset_detail = dict(
             type="arrays",
             subsample=subsample,
+            subsample_to=subsample_to,
             **session_detail,
             **keypoint_detail,
         )
