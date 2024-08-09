@@ -106,9 +106,7 @@ def scree(cumulative_variance, selected_ix, tgt_variance, colors=None, ax=None):
 
     Parameters
     ----------
-    project : Project
-    config : dict
-        Full project config.
+
     """
     if colors is None:
         colors = colorset.active
@@ -127,7 +125,7 @@ def scree(cumulative_variance, selected_ix, tgt_variance, colors=None, ax=None):
             label="Target\nvariance",
         )
     ax.axvline(
-        selected_ix - 1,
+        selected_ix,
         color=colors.subtle,
         lw=1,
         label="Selected\ndimension",
@@ -135,14 +133,14 @@ def scree(cumulative_variance, selected_ix, tgt_variance, colors=None, ax=None):
     ax.plot(cumulative_variance, color=colors.C[0])
     if cumulative_variance.ndim == 1:
         ax.plot(
-            [selected_ix - 1],
+            [selected_ix],
             [cumulative_variance[selected_ix]],
             "o",
             color=colors.C[0],
             ms=3,
         )
-    ax.set_xticks([selected_ix - 1])
-    ax.set_xticklabels([selected_ix])
+    ax.set_xticks([selected_ix])
+    ax.set_xticklabels([selected_ix + 1])
     ax.set_ylabel("Variance\nexplained")
     ax.set_xlabel("Number of dimensions")
     legend(ax)

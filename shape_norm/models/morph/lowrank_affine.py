@@ -92,9 +92,7 @@ def plot_calibration(config: dict, colors):
     selected_ix = calibration_data["n_dims"]
     cumsum = calibration_data["variance_explained"]
 
-    fig, ax = scree(
-        cumsum, selected_ix + 1, config["calibration"]["tgt_variance"]
-    )
+    fig, ax = scree(cumsum, selected_ix, config["calibration"]["tgt_variance"])
     ax.set_title("Morph model dimension selection")
 
     return fig

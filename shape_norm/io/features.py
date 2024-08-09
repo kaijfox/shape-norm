@@ -133,7 +133,7 @@ class locked_pts(reducer):
         )
 
     @staticmethod
-    def plot_calibration(project: Project, config: dict, colors=None):
+    def plot_calibration(config: dict, colors=None):
         """Plot calibration data."""
         return None
 
@@ -176,7 +176,7 @@ class no_reduction(reducer):
         )
 
     @staticmethod
-    def plot_calibration(project: Project, config: dict, colors=None):
+    def plot_calibration(config: dict, colors=None):
         """Plot calibration data."""
         return None
 
@@ -314,7 +314,7 @@ class pcs(reducer):
         # variance explained
         scree(
             cumsum,
-            calib["n_dims"],
+            calib["n_dims"] - 1,
             config["calibration"]["tgt_variance"],
             ax=ax[0],
         )
@@ -323,7 +323,7 @@ class pcs(reducer):
         # variance explained
         scree(
             calib["mean_errs"],
-            calib["n_dims"],
+            calib["n_dims"] - 1,
             None,
             ax=ax[1],
         )

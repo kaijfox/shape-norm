@@ -129,7 +129,12 @@ def _keypoint_names_config(
             ]
     # armature as dictionary
     if not isinstance(keypoint_parents, dict):
-        keypoint_parents = dict(zip(use_keypoints, keypoint_parents))
+        keypoint_parents = dict(zip(keypoint_names, keypoint_parents))
+        keypoint_parents = {
+            c: p
+            for c, p in keypoint_parents.items()
+            if c in use_keypoints and (p in use_keypoints or p is None)
+        }
     else:
         keypoint_parents = {
             c: p for c, p in keypoint_parents.items() if c in use_keypoints
@@ -507,6 +512,7 @@ class arrays(DatasetLoader):
         posterior=None,
         invert_axes=None,
         subsample=None,
+        subsample_to=None,
         alignment_type=None,
         feature_type=None,
     ):
@@ -562,6 +568,7 @@ class arrays(DatasetLoader):
         dataset_detail = dict(
             type="arrays",
             subsample=subsample,
+            subsample_to=subsample_to,
             **session_detail,
             **keypoint_detail,
         )
