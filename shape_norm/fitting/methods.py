@@ -185,6 +185,7 @@ standard_method = FitMethod(
         batch_size=None,
         batch_seed=23,
         update_blacklist=None,
+        update_scales=None,
         use_priors=True,
         learning_rate=8,
         scale_lr=True,

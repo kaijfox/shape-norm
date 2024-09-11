@@ -216,6 +216,53 @@ def _mask_gradients_by_path(model, grads, blacklist, verbose=True):
     )
 
 
+def _scale_gradients_by_path(model, grads, scales, verbose=True):
+    """
+    Apply learning rate scaling to gradients by glob-formatted patterns.
+
+    Converts integer pytree paths to `morph/param_name` and `pose/param_name`
+    strings and checks against the keys in `scales`. The resulting scale applied
+    to a parameter is the product of all scales that match the parameter's path.
+
+    Parameters
+    ----------
+    model : JointModel
+        Used to map tuple parameter indices in `grads` to human-readable names.
+    grads : pytree
+        Gradients to scale.
+    scales : dict[str, float]
+        Dictionary of {pattern: scale} pairs, where pattern is a glob-style
+        search string and scale is a float.
+    """
+    _scale_for = lambda pth: np.prod(
+        [scales[p] for p in scales if fnmatch(_path_to_name(model, pth), p)]
+    )
+    if verbose:
+        pt.tree_map_with_path(
+            lambda pth, grad: (
+                logging.info(
+                    f"Scaling param: {_path_to_name(model, pth)},"
+                    f"shape {grad.shape} by {_scale_for(pth)}"
+                )
+                if any(fnmatch(_path_to_name(model, pth), p) for p in scales)
+                # else None
+                else logging.info(
+                    f"Unscaled param: {_path_to_name(model, pth)}"
+                    f", shape {grad.shape}"
+                )
+            ),
+            grads,
+        )
+    return pt.tree_map_with_path(
+        lambda pth, grad: (
+            grad * _scale_for(pth)
+            if any(fnmatch(_path_to_name(model, pth), p) for p in scales)
+            else grad
+        ),
+        grads,
+    )
+
+
 def _estep(
     model: JointModel,
     observations: Dataset,
@@ -233,7 +280,7 @@ def _mstep_objective(
     model: JointModel,
     observations: Dataset,
     params: JointModelParams,
-    aux_pdf: Float[Array, "n_samp n_discrete"],
+    aux_pdf: Float[Array, ""],
 ) -> Scalar:
     """
     Calculate objective for M-step to maximize.
@@ -273,7 +320,7 @@ def _mstep_loss(model: JointModel, use_priors: bool = True) -> Scalar:
         static_params: dict,
         hyper_params: dict,
         trained_params: optax.Params,
-        aux_pdf: Float[Array, "n_samp n_discrete"],
+        aux_pdf: Float[Array, ""],
     ):
         params = JointModelParams.from_types(
             model, static_params, hyper_params, trained_params
@@ -298,7 +345,11 @@ def lr_exp(step_i, n_samp, lr, hl, min=0, **kw):
     return (lr / n_samp) * 2 ** (-step_i / hl) + min / n_samp
 
 
-rates = dict(const=lr_const, exp=lr_exp)
+def lr_stair(step_i, n_samp, lr, hl, min=0, factor=2, **kw):
+    return (lr * (1/factor) ** (step_i // hl) + min) / n_samp
+
+
+rates = dict(const=lr_const, exp=lr_exp, stair=lr_stair)
 
 
 def construct_jitted_mstep(
@@ -306,6 +357,7 @@ def construct_jitted_mstep(
     optimizer: optax.GradientTransformation,
     update_max: float,
     update_blacklist: list = None,
+    update_scales: dict = None,
     use_priors: bool = True,
 ):
     loss_func = _mstep_loss(model, use_priors)
@@ -332,6 +384,9 @@ def construct_jitted_mstep(
 
         if update_blacklist is not None:
             grads = _mask_gradients_by_path(model, grads, update_blacklist)
+
+        if update_scales is not None:
+            grads = _scale_gradients_by_path(model, grads, update_scales)
 
         updates, opt_state = optimizer.update(grads, opt_state, trained_params)
         trained_params = optax.apply_updates(trained_params, updates)
@@ -362,7 +417,7 @@ def _mstep(
     init_params: tuple,
     static_params: tuple,
     hyper_params: tuple,
-    aux_pdf: Float[Array, "Nt L"],
+    aux_pdf: Float[Array, ""],
     observations: Dataset,
     jitted_step: Callable,
     opt_state,
@@ -371,7 +426,7 @@ def _mstep(
     batch_seed: int = 29,
     trace_params=False,
     log_every=-1,
-) -> Tuple[Float[Array, "n_steps"], JointModelParams, dict, ArrayTrace, dict]:
+) -> Tuple[Float[Array, ""], JointModelParams, dict, ArrayTrace, dict]:
     """
     Parameters
     ----------
@@ -591,6 +646,7 @@ def _prepare_for_iteration(
         optimizer,
         config["mstep"]["update_max"],
         config["update_blacklist"],
+        config.get("update_scales", None),
         config["use_priors"],
     )
     jitted_estep = construct_jitted_estep(model)
@@ -829,9 +885,9 @@ def iterate_em(
     return_param_hist="trace",
     return_reports=True,
 ) -> Tuple[
-    Float[Array, "n_steps"],
+    Float[Array, ""],
     JointModelParams,
-    Float[Array, "n_steps mstep_n_steps"],
+    Float[Array, ""],
     ArrayTrace,
 ]:
     """

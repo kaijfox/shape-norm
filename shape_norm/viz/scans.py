@@ -154,6 +154,7 @@ def jsds_to_reference(
     progress=False,
     data_only=False,
     with_data=None,
+    mode="canonical",
 ):
     if colors is None:
         colors = colorset.active
@@ -165,6 +166,7 @@ def jsds_to_reference(
             dataset,
             split_meta,
             progress=progress,
+            mode=mode,
         )
         if data_only:
             return jsds, base_jsds, dataset
@@ -182,7 +184,7 @@ def jsds_to_reference(
     base_ref_label = lambda i: (
         f"Within {ref_body}, unmorphed" if i == 0 else None
     )
-    base_ref_kw = dict(color=colors.C[0], ls="-", lw=1, zorder=2)
+    base_ref_kw = dict(color="#1E88E5", ls="-", lw=1, zorder=2)
     base_label = lambda i: f"To {ref_body}, unmorphed" if i == 0 else None
     base_kw = dict(color=colors.subtle, ls="--", lw=1, zorder=1)
     morphed_label = f"To {ref_body}, morphed"
@@ -193,6 +195,7 @@ def jsds_to_reference(
     fig, ax, ax_grid = flat_grid(
         len(bodies) + 1, n_col=5, ax_size=(2, 2), sharey=True, sharex=True
     )
+    bodies = [ref_body] + [b for b in bodies if b != ref_body]
     for _a, b in zip(ax[1:], bodies):
         for a in [_a, ax[0]]:
             jsd_data = [jnp.array(list(jsds[m][b].values())) for m in models]
@@ -202,9 +205,9 @@ def jsds_to_reference(
                     a.axvline(base_jsd, label=base_ref_label(i), **base_ref_kw)
         for i, base_jsd in enumerate(base_jsds[b].values()):
             _a.axvline(base_jsd, label=base_label(i), **base_kw)
-        _a.set_title(b)
-        _a.set_yticks(range(len(models)))
-        _a.set_yticklabels(models)
+            _a.set_title(b)
+            _a.set_yticks(range(len(models)))
+            _a.set_yticklabels(models)
     fig.tight_layout()
     ax[0].set_title("All")
     ax_grid[-1, 0].set_xlabel("JSD")

@@ -543,6 +543,7 @@ def model_jsds_to_reference(
     _body_inv=None,
     ref_cloud=None,
     progress=False,
+    mode="caononical",
 ):
     """JS discances of each session (after normalization) to the reference
     session."""
@@ -557,15 +558,33 @@ def model_jsds_to_reference(
     model = get_model(cfg)
     checkpoint = load_fit(project.model(model_name))
 
-    induced_kpts = induced_reference_keypoints(
-        dataset,
-        cfg,
-        model.morph,
-        checkpoint["params"].morph,
-        to_body=None,  # map to all bodies
-        include_reference=True,
-        return_features=True,
-    )
+    if mode == "canonical":
+        ref_body = dataset.session_body_name(dataset.ref_session)
+        canonicalized = apply_bodies(
+            model.morph,
+            checkpoint["params"].morph,
+            dataset,
+            {s: ref_body for s in dataset.sessions},
+        )
+        compare_kpts = {
+            s: canonicalized.get_session(s) for s in canonicalized.sessions
+        }
+    elif mode == "observation":
+        decanonicalized = induced_reference_keypoints(
+            dataset,
+            cfg,
+            model.morph,
+            checkpoint["params"].morph,
+            to_body=None,  # map to all bodies
+            include_reference=True,
+            return_features=True,
+        )
+        compare_kpts = {
+            s: decanonicalized[dataset.session_body_name(s)]
+            for s in dataset.sessions
+        }
+    else:
+        raise ValueError(f"Unknown mode {mode}")
 
     # transform all sessions to the global reference session's body
     jsds = {}
@@ -575,9 +594,7 @@ def model_jsds_to_reference(
         jsds[b] = {
             s: ball_cloud_js(
                 ref_cloud,
-                PointCloudDensity(k=15).fit(
-                    induced_kpts[dataset.session_body_name(s)]
-                ),
+                PointCloudDensity(k=15).fit(compare_kpts[s]),
             )
             for s in _body_inv[b]
         }
@@ -586,7 +603,12 @@ def model_jsds_to_reference(
 
 
 def jsds_to_reference(
-    project, scan_name, dataset=None, split_meta=None, progress=False
+    project,
+    scan_name,
+    dataset=None,
+    split_meta=None,
+    mode="canonical",
+    progress=False,
 ):
     """JS distances to reference session for each model in a scan."""
     models = _resolve_scan_model_list(project, scan_name)
@@ -608,6 +630,7 @@ def jsds_to_reference(
             _body_inv=_body_inv,
             ref_cloud=ref_cloud,
             progress=str(model) if progress else False,
+            mode=mode,
         )
         for model in models
     }

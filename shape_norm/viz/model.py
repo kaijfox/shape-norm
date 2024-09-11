@@ -35,13 +35,15 @@ from ..fitting.scans import merge_param_hist_with_hyperparams
 import jax.numpy as jnp
 import itertools as iit
 from pathlib import Path
+from cmap import Colormap
 import numpy as np
 import jax.numpy.linalg as jla
 import matplotlib.pyplot as plt
 from matplotlib import colors as plt_colors
 import seaborn as sns
 import tqdm
-import cv2
+
+# import cv2 -- BREAKING: switch / remove cv2 dependency
 
 
 def report_plots(
@@ -68,7 +70,11 @@ def report_plots(
 
 
 def em_loss(
-    checkpoint, mstep_relative=True, colors: colorset = None, progress=True
+    checkpoint,
+    mstep_relative=True,
+    colors: colorset = None,
+    progress=True,
+    final_mstep=False,
 ):
     if colors is None:
         colors = colorset.active
@@ -113,8 +119,18 @@ def em_loss(
         ys.append(plot_y)
         cs.append(pal[i])
 
-    lines = stack_lines(xs, ys, cs, lw=1)
-    ax[1].add_artist(lines)
+    if final_mstep:
+        npt = 5
+        ixs = [np.linspace(0, len(y) - 1, npt).astype("int") for y in ys]
+        xs = np.concatenate([np.full(npt, i) for i, y in enumerate(ys)])
+        cs = np.concatenate(
+            [Colormap("magma")(np.linspace(0, 0.7, npt)) for y in ys]
+        )
+        ys = np.concatenate([y[ix] for y, ix in zip(ys, ixs)])
+        ax[1].scatter(xs, ys, c=cs, s=1, rasterized=True)
+    else:
+        lines = stack_lines(xs, ys, cs, lw=1)
+        ax[1].add_artist(lines)
 
     if not mstep_relative:
         ax[1].set_yscale("log")

@@ -4,7 +4,7 @@ from ...config import get_entries, load_calibration_data, save_calibration_data
 from ...util import (
     broadcast_batch,
 )
-from ...pca import fit_with_center
+from ...pca import fit_with_center, fit_covariance_alignment
 from ...project.paths import Project
 
 from typing import Tuple, Union
@@ -23,7 +23,9 @@ defaults = dict(
     upd_var_ofs=None,
     dist_var=None,
     prior_mode="params",
-    init=dict(seed=0, offsets=True),
+    init=dict(
+        seed=0, offsets=True, type="zeros", max_iter=5000, l2_coef=1e-3, lr=1e-2
+    ),
     calibration=dict(tgt_variance=0.9),
 )
 
@@ -297,19 +299,56 @@ def init(
 ) -> LRAParams:
     params = hyperparams
 
-    # Calculate offsets
-    if config["init"].get("offsets", True):
-        offset_updates = jnp.stack(
-            [
-                (observations.get_all_with_body(i) - params.offset).mean(axis=0)
-                for i in range(params.n_bodies)
-            ]
-        )
-    else:
-        logging.warning("Not initializing offsets.")
-        offset_updates = jnp.zeros([params.n_bodies, params.n_feats])
+    if config["init"]["type"] == "covariance":
+        alt_data = [
+            observations.get_all_with_body(i) - params.offset
+            for i in range(params.n_bodies)
+        ]
+        ref_body = hyperparams.ref_body
+        ref_data = alt_data[ref_body]
+        alt_data = jnp.stack(alt_data[:ref_body] + alt_data[ref_body + 1 :])
 
-    mode_updates = jnp.zeros([params.n_bodies, params.n_feats, params.n_dims])
+        # alts_center is alts_data[i].mean(axis = 0) as in "naive"
+        # - therefore ref_center is approx 0
+        # upds_best, shape (n_bodies - 1, n_feats, n_dims) finds best PC update
+        _, upds_best, ref_center, alts_center = fit_covariance_alignment(
+            ref_data,
+            alt_data,
+            params.n_dims,
+            config["init"]["l2_coef"],
+            config["init"]["lr"],
+            config["init"]["max_iter"],
+            ref_pc=params.modes,
+        )
+
+        offset_updates = jnp.insert(alts_center, ref_body, 0, axis=0)
+        mode_updates = jnp.insert(upds_best, ref_body, 0, axis=0)
+
+    elif config["init"]["type"] == "zeros":
+
+        # Calculate offsets
+        if config["init"].get("offsets", True):
+            offset_updates = jnp.stack(
+                [
+                    (observations.get_all_with_body(i) - params.offset).mean(
+                        axis=0
+                    )
+                    for i in range(params.n_bodies)
+                ]
+            )
+        else:
+            logging.warning("Not initializing offsets.")
+            offset_updates = jnp.zeros([params.n_bodies, params.n_feats])
+
+        mode_updates = jnp.zeros(
+            [params.n_bodies, params.n_feats, params.n_dims]
+        )
+
+    else:
+        raise ValueError(
+            f"Invalid init type: {config['init']['type']}, supported"
+            " are 'zeros' and 'covariance'."
+        )
 
     params._tree.update(
         dict(

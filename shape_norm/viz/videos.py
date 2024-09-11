@@ -9,7 +9,7 @@ from ..fitting.methods import load_and_prepare_dataset
 
 from pathlib import Path
 import matplotlib.pyplot as plt
-import cv2
+# import cv2 -- BREAKING: switch/remove cv2 dependency
 import numpy as np
 import imageio.v3 as iio
 import logging

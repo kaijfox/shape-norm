@@ -187,7 +187,7 @@ def find_nearest_frames(query, library, return_ixs=False):
     return library[selected_ixs]
 
 
-def axes_off(ax, y = True, x = True):
+def axes_off(ax, y=True, x=True):
     # run on each axis if an array of axes
     if hasattr(ax, "__len__"):
         for a in np.array(ax).ravel():
@@ -363,7 +363,7 @@ def unique_handles(ax):
     return newHandles, newLabels
 
 
-def kde(sample, bw, resolution=200, buffer=5, density=False, eval_x = None):
+def kde(sample, bw, resolution=200, buffer=5, density=False, eval_x=None):
     if eval_x is None:
         x = np.linspace(
             sample.min() - buffer * bw, sample.max() + buffer * bw, resolution
@@ -470,6 +470,7 @@ def grouped_stripplot(
     lim_buffer=None,
     lighten_points=False,
     error=np.nanstd,
+    expand_err=None,
     errorbar=True,
     connect=False,
     legend=True,
@@ -546,6 +547,10 @@ def grouped_stripplot(
             jitter=jitter,
             stacked=connect,
         )
+        if len(data[grp]) == 1:
+            mean_x = np.array([mean_x])
+            mean_strip = np.array([mean_strip])
+            err_strip = np.array([err_strip])
 
         if points:
             if lighten_points is not False:
@@ -566,7 +571,7 @@ def grouped_stripplot(
 
         # symmetrize errorbars if only one value is provided by `error`
         if errorbar:
-            if err_strip.ndim == 1:
+            if (err_strip.ndim == 1 and expand_err is None) or expand_err:
                 err_strip = np.stack([err_strip, err_strip], axis=-1)
             ax.errorbar(
                 mean_x + ofs,
@@ -588,19 +593,20 @@ def grouped_stripplot(
     return ax
 
 
-def expand_groups(data, group_names, ndim = 1):
+def expand_groups(data, group_names, ndim=1):
     """Convert list of arrays to dictionary of lists of arrays for grouped
     plots.
-    
+
     data : list[array]
         List of arrays to be arranged into groups.
     group_names : list
         List of group name corresponding to each array.
     """
     e = [np.full([1] * ndim, np.nan)]
-    return {k: e * i + [d] + e * (len(data) - i - 1) for i, (d, k) in enumerate(zip(data, group_names))}
-
-
+    return {
+        k: e * i + [d] + e * (len(data) - i - 1)
+        for i, (d, k) in enumerate(zip(data, group_names))
+    }
 
 
 def grouped_errorbar_strips(
@@ -672,9 +678,11 @@ def grouped_errorbar_strips(
         label = labels[grp] if labels is not None else None
         grp_color = colors[grp]
 
-        ofs = (i_grp - (len(group_order) - 1) / 2) * min(
-            0.2, 0.6 / len(group_order)
-        ) * offset
+        ofs = (
+            (i_grp - (len(group_order) - 1) / 2)
+            * min(0.2, 0.6 / len(group_order))
+            * offset
+        )
 
         means = [np.array([np.nanmean(arr) for arr in la]) for la in data[grp]]
         errs = [
@@ -937,7 +945,9 @@ def __grouped_violins(arrs, ofs, x, color, label, ax, **kws):
         for x_, arr in zip(x__, arrs__):
             if thumb_bandwidth:
                 iqr = np.percentile(arr, 75) - np.percentile(arr, 25)
-                bw_ = bw * 0.9 * min(np.std(arr), iqr / 1.34) * len(arr) ** (-0.2)
+                bw_ = (
+                    bw * 0.9 * min(np.std(arr), iqr / 1.34) * len(arr) ** (-0.2)
+                )
             y, k = kde(arr, bw, resolution=resolution, buffer=bw_buffer)
             k = k / k.max() * width / 2
             k = k - k.min()
@@ -1104,7 +1114,7 @@ def __grouped_violin_points(arrs, ofs, x, color, label, ax, **kws):
 
     for x__, arrs__ in zip(strip_x, arrs):
         for x_, arr in zip(x__, arrs__):
-            y, k = kde(arr, bw, eval_x = arr)
+            y, k = kde(arr, bw, eval_x=arr)
             k = k / k.max() * width / 2
             k = k - k.min()
 
@@ -1130,7 +1140,6 @@ def __grouped_violin_points(arrs, ofs, x, color, label, ax, **kws):
                 color=color,
                 **errorbar_kw,
             )
-
 
 
 def grouped_violin_points(
@@ -1229,6 +1238,25 @@ def flat_grid(total, n_col, ax_size, **subplot_kw):
     return fig, ax_ravel[:total], ax
 
 
+def flat_subfig_grid(total, n_col, ax_size=None, fig=None, **gs_kw):
+    n_row = int(np.ceil(total / n_col))
+    if fig is None:
+        fig = plt.figure(figsize=(ax_size[0] * n_col, ax_size[1] * n_row))
+    gs = fig.add_gridspec(n_row, n_col, **gs_kw)
+    ax = np.array(
+        [
+            fig.add_subfigure(gs[i, j])
+            for i in range(n_row)
+            for j in range(n_col)
+            if i * n_col + j < total
+        ]
+        + [None] * (n_row * n_col - total)
+    )
+    ax_grid = ax.reshape(n_row, n_col)
+
+    return fig, ax, ax_grid
+
+
 def ci(
     arr,
     stat=np.mean,
@@ -1236,7 +1264,7 @@ def ci(
     seed=0,
     n=100,
     alternative="two-sided",
-    absolute = False,
+    absolute=False,
     return_samples=False,
 ):
     sample_stat = stat(arr)
@@ -1249,14 +1277,17 @@ def ci(
     if alternative == "two-sided":
         edge = (1 - level) / 2
         ci = np.quantile(samples, [edge, 1 - edge], axis=0)
-        if absolute: return ci
+        if absolute:
+            return ci
         return sample_stat - ci[0], ci[1] - sample_stat
     elif alternative == "less":
         ci = np.quantile(samples, level, axis=0)
-        if absolute: return ci
+        if absolute:
+            return ci
         return sample_stat - ci
     elif alternative == "greater":
-        if absolute: return ci
+        if absolute:
+            return ci
         ci = np.quantile(samples, 1 - level, axis=0)
         return ci - sample_stat
 
@@ -1290,18 +1321,8 @@ def stack_lines(xs, ys, cs, **kws):
     max_len = np.max([len(x) for x in xs] + [len(y) for y in ys])
     pad_kw = dict(mode="constant", constant_values=np.nan)
     # Pad xs and ys with nans at the end to make them the same length
-    xs = [
-        np.pad(
-            x, (0, max_len - len(x)), **pad_kw
-        )
-        for x in xs
-    ]
-    ys = [
-        np.pad(
-            y, (0, max_len - len(y)), **pad_kw
-        )
-        for y in ys
-    ]
+    xs = [np.pad(x, (0, max_len - len(x)), **pad_kw) for x in xs]
+    ys = [np.pad(y, (0, max_len - len(y)), **pad_kw) for y in ys]
 
     # Create a list of (x, y) points for each pair of xs and ys
     points = [np.column_stack([x, y]) for x, y in zip(xs, ys)]

@@ -65,9 +65,10 @@ colorset.active = light_colors
 class plot_finalizer(object):
     def __init__(self, plot_dir, **kws):
         self.plot_dir = plot_dir
-        kws = {"fmt": "png", "save": True, **kws}
+        kws = {"fmt": "png", "save": True, "display": True, **kws}
         self.fmt = kws.pop("fmt")
         self.save = kws.pop("save")
+        self.display = kws.pop("display")
         self.kws = {"dpi": 300, "bbox_inches": "tight", **kws}
 
     def finalize(
@@ -101,7 +102,7 @@ class plot_finalizer(object):
             out_file = Path(plot_dir) / (name + "." + fmt)
             fig.savefig(out_file, **self.kws)
 
-        if display:
+        if display and self.display:
             plt.show(fig)
 
         return out_file

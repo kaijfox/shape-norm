@@ -26,12 +26,28 @@ def _align_scales(dataset: Dataset, config):
     anterior_ixs = [dataset.aux["keypoint_ids"][config["anterior"]]]
     posterior_ixs = [dataset.aux["keypoint_ids"][config["origin"]]]
     absolute_scales = np.zeros(dataset.n_sessions)
-    for sess in dataset.sessions:
-        anterior_com = dataset.get_session(sess)[:, anterior_ixs].mean(axis=1)
-        posterior_com = dataset.get_session(sess)[:, posterior_ixs].mean(axis=1)
-        absolute_scales[dataset.session_id(sess)] = np.median(
-            la.norm(anterior_com - posterior_com, axis=-1), axis=0
-        )
+    if config.get("rescale_mode", "session") == "session":
+        for sess in dataset.sessions:
+            anterior_com = dataset.get_session(sess)[:, anterior_ixs].mean(
+                axis=1
+            )
+            posterior_com = dataset.get_session(sess)[:, posterior_ixs].mean(
+                axis=1
+            )
+            absolute_scales[dataset.session_id(sess)] = np.median(
+                la.norm(anterior_com - posterior_com, axis=-1), axis=0
+            )
+    else:
+        for bod in dataset.bodies:
+            s_data = dataset.get_all_with_body(bod)
+            anterior_com = s_data[:, anterior_ixs].mean(axis=1)
+            posterior_com = s_data[:, posterior_ixs].mean(axis=1)
+            scale = np.median(
+                la.norm(anterior_com - posterior_com, axis=-1), axis=0
+            )
+            for s in dataset.sessions:
+                if dataset.session_body_name(s) == bod:
+                    absolute_scales[dataset.session_id(s)] = scale
     absolute_scales = np.array(absolute_scales)
     scales = absolute_scales / absolute_scales.mean()
     scaled = dataset.update(
@@ -158,6 +174,7 @@ class sagittal(AlignmentMethod):
         origin=None,
         anterior=None,
         rescale=True,
+        rescale_mode="session",
     )
 
     @staticmethod
