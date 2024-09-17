@@ -636,7 +636,7 @@ scan_dataset, split_meta, _ = scans.prepare_scan_dataset(
 
 # Run parameter scan!
 scans.run_scan(
-    project, "morph-prior-scan", scan_dataset, log_every=20, force_restart=False
+    project, "morph-prior-scan", scan_dataset, log_every=20, force_restart=True
 )
 
 # -- training diagnostics
