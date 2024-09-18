@@ -55,7 +55,7 @@ logging.getLogger().setLevel(logging.INFO)
 import sys
 
 blscale_arrays_dir = Path(
-    "/Users/kaifox/projects/mph/data_explore/testsets/blscale-arrays"
+    "/Users/kaifox/projects/mph/data_explore/testsets/blscale-arrays/3wk-to-all_ntt-norm"
 )
 project_dir = Path(
     "/Users/kaifox/projects/mph/generative_api/test/projects/blscale-script/3wk-to-07-52-npyloader-runnable"
@@ -564,7 +564,7 @@ loaders.raw_npy.setup_project_config(
         "rf_foot",
         "t_tip",
     ],
-    subsample_to=20,
+    subsample_to=200,
     **project_config_kws,
 )
 
