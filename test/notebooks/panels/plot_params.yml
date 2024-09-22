@@ -1,0 +1,88 @@
+rc:
+  # font
+  "font.family": "Arial"
+  "font.size": 6
+  "axes.labelsize": 6
+  "xtick.labelsize": 5.5
+  "ytick.labelsize": 5.5
+  "axes.titlesize": 6
+  "legend.fontsize": 5.5
+  "figure.titlesize": 6
+  # axes
+  "axes.facecolor": "ffffff00"
+  "axes.spines.top": False
+  "axes.spines.right": False
+  "axes.linewidth": 0.25
+  "xtick.major.width": 0.2
+  "ytick.major.width": 0.2
+  "xtick.minor.width": 0.15
+  "ytick.minor.width": 0.15
+  "xtick.major.pad": 1.5
+  "ytick.major.pad": 1.5
+  "xtick.major.size": 1.2
+  "ytick.major.size": 1.2
+  "xtick.minor.size": 1
+  "ytick.minor.size": 1
+  # legend
+  "legend.frameon": False
+  # misc
+  "hatch.linewidth": 0.5
+
+savefig:
+  transparent: True
+  dpi: 1200
+
+colors:
+  sim_age:
+    "3": "deep:180"
+    "5": "deep:150"
+    "7": "deep:120"
+    "24": "deep:90"
+    "52": "deep:70"
+    "72": "deep:30"
+  age:
+    "3": "curl_pink:180"
+    "5": "curl_pink:150"
+    "7": "curl_pink:130"
+    "24": "curl_pink:110"
+    "52": "curl_pink:90"
+    "72": "curl_pink:70"
+  bhv:
+    rear: "tab20c:0"
+    loco: "tab20c:4"
+    raise: "tab20c:8"
+    turn: "tab20c:12"
+    hunch: "tab20b:10"
+  keypoint:
+    - "Greens"
+    -
+      - 0.25
+      - "back"
+    -
+      - 0.32
+      - "shldr"
+    -
+      - 0.39
+      - "head"
+    -
+      - 0.46
+      - "nose"
+    -
+      - 0.53
+      - "t_base"
+    -
+      - 0.60
+      - "l_ear"
+      - "r_ear"
+    -
+      - 0.67
+      - "rr_foot"
+      - "lr_foot"
+    -
+      - 0.74
+      - "lr_knee"
+      - "rr_knee"
+    -
+      - 0.81
+      - "lf_foot"
+      - "rf_foot"

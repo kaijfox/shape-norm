@@ -1238,10 +1238,10 @@ def flat_grid(total, n_col, ax_size, **subplot_kw):
     return fig, ax_ravel[:total], ax
 
 
-def flat_subfig_grid(total, n_col, ax_size=None, fig=None, **gs_kw):
+def flat_subfig_grid(total, n_col, ax_size=None, fig=None, fig_kw = {}, **gs_kw):
     n_row = int(np.ceil(total / n_col))
     if fig is None:
-        fig = plt.figure(figsize=(ax_size[0] * n_col, ax_size[1] * n_row))
+        fig = plt.figure(figsize=(ax_size[0] * n_col, ax_size[1] * n_row), **fig_kw)
     gs = fig.add_gridspec(n_row, n_col, **gs_kw)
     ax = np.array(
         [

@@ -36,7 +36,9 @@ defaults = dict(
     wish_dof=None,
     logit_max=5,
     init=dict(count_eps=1e-3, cov_eigen_eps=1e-3, subsample=False, seed=0),
-    calibration=dict(max_components=10, n_iter=5),
+    calibration=dict(
+        max_components=10, n_iter=5, sessions="ref", n_repeat=1, mode="bic"
+    ),
 )
 
 
@@ -72,29 +74,76 @@ def calibrate_base_model(
             )
         ).astype(int)
 
-        bics = []
-        for i, n in enumerate(ns):
-            mix = _fit_gmm(
-                dataset,
-                int(n),
-                config["init"]["subsample"],
-                config["init"]["seed"],
-                large_dataset_ok=i != 0,
+        if config["calibration"].get("sessions", "ref") == "ref":
+            sessions = [dataset.ref_session]
+        elif config["calibration"]["sessions"] == "all":
+            sessions = list(dataset.sessions)
+        sessions = sessions * config["calibration"].get("n_repeat", 1)
+        scores = [[] for _ in sessions]
+
+        for j, session in enumerate(sessions):
+            for i, n in enumerate(ns):
+                if config["calibration"].get("mode", "bic") == "bic":
+                    mix = _fit_gmm(
+                        dataset,
+                        int(n),
+                        config["init"]["subsample"],
+                        config["init"]["seed"],
+                        large_dataset_ok=i != 0,
+                        session=session,
+                    )
+                    pts = dataset.get_session(session)
+                    scores[j].append(mix.bic(pts))
+
+                elif config["calibration"]["mode"] == "likelihood":
+                    pts = dataset.get_session(session)
+                    split = int(len(pts) * 0.8)
+                    shuf = jr.permutation(
+                        jr.PRNGKey(config["init"]["seed"]) + i + int(j * n), pts
+                    )
+                    train_pts, val_pts = shuf[:split], shuf[split:]
+
+                    mix = _fit_gmm(
+                        None,
+                        int(n),
+                        config["init"]["subsample"],
+                        config["init"]["seed"],
+                        large_dataset_ok=i != 0,
+                        pts=train_pts,
+                    )
+
+                    scores[j].append(
+                        [
+                            mix.score(val_pts).mean(),
+                            mix.score(train_pts).mean(),
+                        ]
+                    )
+
+        print(np.array(scores).shape)
+
+        if config["calibration"].get("mode", "bic") == "bic":
+            scores = jnp.array(scores).mean(axis=0)
+            selected_ix = jnp.argmin(scores)
+            selected_n = ns[selected_ix]
+        elif config["calibration"]["mode"] == "likelihood":
+            scores = jnp.array(scores).mean(axis=0)
+            selected_ix = jnp.argmax(scores[:, 0])
+            selected_n = ns[selected_ix]
+        else:
+            raise ValueError(
+                f"Unknown calibration mode: {config['calibration']['mode']}"
             )
-            bics.append(mix.bic(init_pts))
-        bics = jnp.array(bics)
-        selected_ix = jnp.argmin(bics)
-        selected_n = ns[selected_ix]
+
     else:
         ns = [n_components]
-        bics = [0]
+        scores = [0]
         selected_ix = 0
         selected_n = n_components
 
     # save calibration data for plotting
     calib = config["calibration_data"] = dict(
         ns_tested=ns,
-        bics=bics,
+        bics=scores,
         best_n=selected_n,
         best_test=selected_ix,
         dim_variances=jnp.var(init_pts, axis=0),
@@ -118,8 +167,14 @@ def _fit_gmm(
     subsample,
     seed,
     large_dataset_ok=False,
+    pts=None,
+    session=None,
 ):
-    init_pts = dataset.get_session(dataset.ref_session)
+    if pts is None:
+        session = dataset.ref_session if session is None else session
+        init_pts = dataset.get_session(session)
+    else:
+        init_pts = pts
 
     if subsample is not False:
         if subsample < 1:
@@ -137,7 +192,7 @@ def _fit_gmm(
             "full dataset. Consider subsampling."
         )
 
-    logging.info(f"Fitting GMM to {init_pts.shape[0]} frames")
+    # logging.info(f"Fitting GMM to {init_pts.shape[0]} frames")
     init_mix = mixture.GaussianMixture(
         n_components=n_components,
         random_state=seed,
@@ -158,16 +213,30 @@ def plot_calibration(config, colors):
 
     config = config["pose"]
     calibration_data = config["calibration_data"]
+    mode = config["calibration"].get("mode", "bic")
 
     fig, ax = plt.subplots(figsize=(3, 2))
-    ax.plot(
-        calibration_data["ns_tested"],
-        calibration_data["bics"],
-        "o-",
-        ms=2,
-        color=colors.neutral,
-        lw=1,
-    )
+    if mode == "bic":
+        ax.plot(
+            calibration_data["ns_tested"],
+            calibration_data["bics"],
+            "o-",
+            ms=2,
+            color=colors.neutral,
+            lw=1,
+        )
+    else:
+        for i, (clr, lbl) in enumerate([("C0", "Test"), ("k", "Train")]):
+            ax.plot(
+                calibration_data["ns_tested"],
+                calibration_data["bics"][:, i],
+                "o-",
+                ms=2,
+                color=clr,
+                lw=1,
+                label=lbl,
+            )
+
     ax.axvline(
         calibration_data["best_n"],
         color=colors.subtle,
@@ -176,9 +245,13 @@ def plot_calibration(config, colors):
         label="Selected",
     )
     ax.set_xlabel("Number of components")
-    ax.set_ylabel("BIC")
-    ax.set_yticks(ax.get_ylim())
-    ax.set_yticklabels(["", ""])
+    if mode == "bic":
+        ax.set_yticks(ax.get_ylim())
+        ax.set_ylabel("BIC")
+        ax.set_yticklabels(["", ""])
+    else:
+        ax.set_ylabel("Log likelihood")
+
     ax.set_title("Pose model component selection")
     sns.despine(ax=ax)
     legend(ax)

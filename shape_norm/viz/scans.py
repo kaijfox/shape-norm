@@ -72,6 +72,7 @@ def withinbody_induced_errs(
     split_meta=None,
     colors: colorset = None,
     progress=False,
+    data_only=False,
 ):
     if colors is None:
         colors = colorset.active
@@ -79,6 +80,8 @@ def withinbody_induced_errs(
     errs = _withinbody_induced_errs(
         project, scan_name, dataset, split_meta, progress=progress
     )
+    if data_only:
+        return errs
 
     models = sorted(list(errs.keys()))
     bodies = errs[models[0]].keys()
@@ -181,9 +184,7 @@ def jsds_to_reference(
     ][0]
 
     # labels and aesthetics
-    base_ref_label = lambda i: (
-        f"Within {ref_body}, unmorphed" if i == 0 else None
-    )
+    base_ref_label = f"Within {ref_body}, unmorphed"
     base_ref_kw = dict(color="#1E88E5", ls="-", lw=1, zorder=2)
     base_label = lambda i: f"To {ref_body}, unmorphed" if i == 0 else None
     base_kw = dict(color=colors.subtle, ls="--", lw=1, zorder=1)
@@ -200,9 +201,11 @@ def jsds_to_reference(
         for a in [_a, ax[0]]:
             jsd_data = [jnp.array(list(jsds[m][b].values())) for m in models]
             a.plot(jsd_data, jnp.arange(len(jsd_data)), "o-", **morphed_kw)
+            label = base_ref_label
             for i, (s, base_jsd) in enumerate(base_jsds[ref_body].items()):
-                if s != dataset.ref_session:
-                    a.axvline(base_jsd, label=base_ref_label(i), **base_ref_kw)
+                if s != dataset.session_name(dataset.ref_session):
+                    a.axvline(base_jsd, label=label, **base_ref_kw)
+                    label = None
         for i, base_jsd in enumerate(base_jsds[b].values()):
             _a.axvline(base_jsd, label=base_label(i), **base_kw)
             _a.set_title(b)
