@@ -163,7 +163,10 @@ def load_model_config(path):
         model_cfg.update(_yaml.load(f))
     # load calibration data and insert into config sections
     model_cfg = _add_calibration_data(
-        model_cfg, load_calibration_data(project_path.parent / model_cfg["calibration_file"])
+        model_cfg,
+        load_calibration_data(
+            project_path.parent / model_cfg["calibration_file"]
+        ),
     )
     return model_cfg
 
@@ -192,9 +195,13 @@ def save_model_config(path, config, write_calib=False):
     # save project-wide calibration data if requested
     project_path = path.parent / model_cfg["project"]
     if write_calib:
-        calib = load_calibration_data(project_path.parent / config["calibration_file"])
+        calib = load_calibration_data(
+            project_path.parent / config["calibration_file"]
+        )
         calib.update(_extract_calibration_data(model_cfg))
-        save_calibration_data(project_path.parent / config["calibration_file"], calib)
+        save_calibration_data(
+            project_path.parent / config["calibration_file"], calib
+        )
 
 
 def load_calibration_data(path):

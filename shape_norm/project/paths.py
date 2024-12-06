@@ -67,7 +67,8 @@ def create_model(
         project_override = None
         if config is None:
             raise ValueError(
-                "Base config `config` is required if `project` is a string or PathLike."
+                "Base model config `config` is required if `project` is a"
+                " string or PathLike."
             )
     else:
         if name is None:
@@ -78,15 +79,12 @@ def create_model(
         config_path = project.model_config(name)
         if config is None:
             config = load_model_config(project.base_model_config())
-        # override project location with relative path
         proj_cfg = Path(config["project"])
+        # keep project path relative if it was relative
+        project_override = None
         if not proj_cfg.is_absolute():
-            proj_cfg = (config_path / proj_cfg).resolve()
-        pfx = Path(os.path.commonpath([proj_cfg, model_dir])).parts
-        project_override = str(
-            Path("../" * (len(model_dir.parts) - len(pfx)))
-            / Path(*proj_cfg.parts[len(pfx) :])
-        )
+            proj_cfg = (config_path.parent / proj_cfg).resolve()
+            project_override = relative_to(proj_cfg, model_dir)
 
     if isinstance(config, (str, os.PathLike)):
         config = load_model_config(config)
@@ -97,3 +95,26 @@ def create_model(
         config = {**config, "project": project_override}
     save_model_config(config_path, config)
     return model_dir, config
+
+
+def relative_to(path, base):
+    """Convert an absolute path to be relative to a base path."""
+
+    path = Path(path)
+    base = Path(base)
+
+    if not path.is_absolute():
+        ValueError("`path` must be absolute.")
+    if not base.is_absolute():
+        ValueError("`base` must be an absolute path.")
+
+    pfx = Path(os.path.commonpath([path, base])).parts
+    relative = str(
+        Path("../" * (len(base.parts) - len(pfx)))
+        / Path(*path.parts[len(pfx) :])
+    )
+
+    if not relative.startswith("."):
+        relative = f".{os.sep}{relative}"
+
+    return relative

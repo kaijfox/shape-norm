@@ -18,7 +18,7 @@ def _find_files(filepaths, ext):
 
     Parameters
     ----------
-    filepaths : str, list of str, dict[str, str]
+    filepaths : str, os.PathLike, list of str, dict[str, str]
         File paths or directory to search for files. If a string, will be
         interpreted as a directory to search for files. If a dictionary, is
         interpeted as a mapping from session names to file paths. If a list, is
@@ -29,7 +29,8 @@ def _find_files(filepaths, ext):
         Common root path of found files.
     filepaths : dict[str, str]
         Mapping of session names to file paths."""
-    if isinstance(filepaths, str):
+    if isinstance(filepaths, (str, os.PathLike)):
+        filepaths = str(filepaths)
         filepaths = [
             filepaths + "/" + fn
             for fn in os.listdir(filepaths)
@@ -94,6 +95,9 @@ def _session_file_config(
         keypoint_names = keypoint_names(
             os.path.join(root, list(filepaths.values())[0])
         )
+
+    if ref_session is None:
+        ref_session = list(filepaths.keys())[0]
 
     return (
         dict(
@@ -390,7 +394,7 @@ class raw_npy(DatasetLoader):
         project,
         filepaths,
         keypoint_names,
-        ref_session,
+        ref_session=None,
         use_keypoints=None,
         exclude_keypoints=None,
         keypoint_parents=None,
@@ -413,9 +417,9 @@ class raw_npy(DatasetLoader):
             to search for .npy files.
         keypoint_names : list of str
             Ordered list of keypoint names as appearing in the .npy files.
-        ref_session : str
+        ref_session : str or None, default None
             Name of session to use as reference, whose poses should be treated
-            as canoncial.
+            as canoncial. If None, will use the first session in the list.
         use_keypoints : list of str, default None
             List of keypoint names to include, or None to use all keypoints.
         exclude_keypoints : list of str, default None
@@ -437,7 +441,7 @@ class raw_npy(DatasetLoader):
         alignment_type : str, default None
             Alignment method to use. If None, will use 'sagittal'.
         feature_type : str, default None
-            Feature reduction method to use. If None, will use 'locked_pts'.
+            Feature reduction method to use. If None, will use 'locked_pts'
         """
 
         # form session file data

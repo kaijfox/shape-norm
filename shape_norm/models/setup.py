@@ -1,10 +1,11 @@
 from .pose import pose_models
 from .morph import morph_models
-from ..project.paths import ensure_dirs
+from ..project.paths import ensure_dirs, relative_to
 from ..config import save_config, loads
 from ..fitting.methods import fit_types
 
 import os, os.path
+from pathlib import Path
 
 
 def setup_base_model_config(
@@ -46,7 +47,9 @@ def setup_base_model_config(
 
     model_cfg = model_cfg_structure.copy()
 
-    model_cfg["project"] = os.path.realpath(str(project_path))
+    model_cfg["project"] = relative_to(
+        Path(project_path).resolve(), Path(file_path).parent
+    )
     model_cfg["pose"]["type"] = pose_type
     model_cfg["pose"].update(pose_models[pose_type].defaults)
     model_cfg["morph"]["type"] = morph_type

@@ -111,15 +111,12 @@ def calibrate_base_model(
                         large_dataset_ok=i != 0,
                         pts=train_pts,
                     )
-
                     scores[j].append(
                         [
                             mix.score(val_pts).mean(),
                             mix.score(train_pts).mean(),
                         ]
                     )
-
-        print(np.array(scores).shape)
 
         if config["calibration"].get("mode", "bic") == "bic":
             scores = jnp.array(scores).mean(axis=0)
@@ -236,6 +233,14 @@ def plot_calibration(config, colors):
                 lw=1,
                 label=lbl,
             )
+        # do not allow log-axis to exceed more than twice the range of log
+        # likelihood from training data
+        vmin = calibration_data["bics"][:, 1].min()
+        vmax = calibration_data["bics"][:, 1].max()
+        ylim = ax.get_ylim()
+        ymin = max(ylim[0], vmin - (vmax - vmin))
+        ymax = min(ylim[1], vmax + (vmax - vmin))
+        ax.set_ylim(ymin, ymax)
 
     ax.axvline(
         calibration_data["best_n"],

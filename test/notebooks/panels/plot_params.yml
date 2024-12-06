@@ -32,6 +32,20 @@ savefig:
   transparent: True
   dpi: 1200
 
+behavior:
+  keys:
+    rear: "angle_reer"
+    loco: "locomotion"
+    raise: "head_raise"
+    turn: "bend"
+    hunch: "hunch"
+  names:
+    rear: "Rear"
+    loco: "Walk"
+    raise: "Head\nRaise"
+    turn: "Turn"
+    hunch: "Hunch"
+
 colors:
   sim_age:
     "3": "deep:180"
@@ -86,3 +100,82 @@ colors:
       - 0.81
       - "lf_foot"
       - "rf_foot"
+
+
+armature:
+  short_names:
+    back-hips: lo back
+    shldr-back: hi back
+    head-shldr: neck
+    l_ear-head: L ear
+    r_ear-head: R ear
+    nose-head: head
+    lf_foot-shldr: R forelimb
+    rf_foot-shldr: L forelimb
+    t_base-hips: rump
+    lr_knee-hips: L hindlimb
+    lr_foot-lr_knee: L foot
+    rr_knee-hips: R hindlimb
+    rr_foot-rr_knee: R foot
+  order:
+    - lo back
+    - hi back
+    - neck
+    - head
+    - rump
+    - L ear
+    - R ear
+    - L foot
+    - R foot
+    - L hindlimb
+    - R hindlimb
+    - R forelimb
+    - L forelimb
+  groups:
+    - [0, 1]
+    - [2, 4]
+    - [5, 8]
+    - [9, 12]
+  group_names:
+    - "Back"
+    - "Head and\nrump"
+    - "Ears and\nfeet"
+    - "Limbs"
+  joint_short_names:
+    t_base-hips-back: Rump-back
+    hips-back-shldr: Hi-lo back
+    back-shldr-head: Neck-back
+    shldr-head-nose: Head-neck
+    l_ear-head-shldr: L ear
+    r_ear-head-shldr: R ear
+    lr_knee-hips-back: L hindlimb
+    lr_foot-lr_knee-hips: L foot
+    rr_knee-hips-back: R hindlimb
+    rr_foot-rr_knee-hips: R foot
+    lf_foot-shldr-back: L forelimb
+    rf_foot-shldr-back: R forelimb
+  joint_order:
+    - Rump-back
+    - Hi-lo back
+    - Neck-back
+    - Head-neck
+    - L ear
+    - R ear
+    - L foot
+    - R foot
+    - L hindlimb
+    - R hindlimb
+    - L forelimb
+    - R forelimb
+  joint_groups:
+    - [0, 3]
+    - [4, 5]
+    - [6, 11]
+  joint_group_names:
+    - "Spine"
+    - "Ears"
+    - "Limbs"
+  
+
+
+

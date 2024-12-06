@@ -1,0 +1,18 @@
+root: /Users/kaifox/projects/mph/data_explore
+
+mouse_ont_keypoints:
+  path: data
+  metadata_file: meta.csv
+
+mouse_blscale_keypoints:
+  path: testsets/blscale-arrays
+
+mouse_ont_supervised_ethogram:
+  path: data/moont_scalar-classifier-behaviors.p
+
+mouse_blscale_moseq:
+  path: testsets/blscale-script-projects
+
+mouse_ont_moseq:
+  path: testsets/ont-script-projects
+

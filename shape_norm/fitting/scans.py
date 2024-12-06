@@ -7,7 +7,13 @@ from ..config import (
     load_model_config,
     save_model_config,
 )
-from ..project.paths import ensure_dirs, Project, recursive_update, create_model
+from ..project.paths import (
+    ensure_dirs,
+    Project,
+    recursive_update,
+    create_model,
+    relative_to,
+)
 from .methods import (
     fit_types,
     fit,
@@ -38,6 +44,7 @@ import jax.numpy as jnp
 import logging
 import shutil
 import tqdm
+import os.path
 
 
 def setup_scan_config(
@@ -89,10 +96,18 @@ def setup_scan_config(
         **{"em": model_config["fit"]},
     }
 
-    # create scan directory and save configs
+    # create scan directory
     ensure_dirs(project)
     scan_dir = project.scan(name)
     scan_dir.mkdir(exist_ok=True)
+
+    proj_cfg = Path(model_config["project"])
+    # keep project path relative if it was relative
+    if not proj_cfg.is_absolute():
+        proj_cfg = project.base_model_config().parent / proj_cfg
+        model_config["project"] = relative_to(proj_cfg, scan_dir)
+
+    # save and return configs
     save_config(scan_dir / "scan.yml", config)
     save_model_config(scan_dir / "base_model.yml", model_config)
     return config, model_config
