@@ -56,7 +56,7 @@ import pandas as pd
 import seaborn as sns
 
 from .plotting import getc
-from .keypoint_data import mouse_data_armature_meta
+from .keypoint_data import mouse_data_armature_meta, full_ontogeny_data_aligned
 
 
 def plotting_metadata(
