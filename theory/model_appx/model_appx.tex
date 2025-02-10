@@ -1,0 +1,158 @@
+\documentclass{article}         %% What type of document you're writing.
+\usepackage[fleqn]{amsmath}
+\usepackage{amsfonts,amssymb}   %% AMS mathematics macros
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{amssymb}
+\usepackage{parskip}
+\usepackage{mathtools}
+\usepackage{bm}
+\usepackage[margin=1.3in]{geometry}
+\usepackage{hyperref}
+\usepackage{amsthm}
+\usepackage{tikz}
+%\usetikzlibrary{bayesnet}
+\usetikzlibrary{arrows}
+\usepackage{color}
+\usepackage{caption}
+\usepackage{subcaption}
+\usetikzlibrary{backgrounds}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{definition}{Definition}[section]
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{corollary}{Corollary}[section]
+\newtheorem{lemma}{Lemma}[section]
+\newcommand\descitem[1]{\item{\bfseries #1}}
+\DeclareMathOperator{\tr}{tr}
+\DeclareMathOperator{\re}{Re}
+\DeclareMathOperator{\im}{Im}
+\DeclareMathOperator{\argmax}{\arg\max}
+\DeclareMathOperator{\pad}{pad}
+\graphicspath{ {./figs/} }
+\newcommand{\inv}{^{-1}}
+\newcommand{\pd}{\partial}
+\newcommand{\EE}{\mathbb{E}}
+\newcommand{\RR}{\mathbb{R}}
+\newcommand{\ZZ}{\mathbb{Z}}
+\newcommand{\NN}{\mathcal{N}}
+\newcommand{\mat}[1]{\begin{matrix} #1 \end{matrix}}
+\newcommand{\abs}[1]{\left| #1 \right|}
+\newcommand{\norm}[1]{\left|\left| #1 \right|\right|}
+\newcommand{\cb}[1]{\left\{ #1 \right\}}
+\newcommand{\pn}[1]{\left( #1 \right)}
+\newcommand{\bc}[1]{\left[ #1 \right]}
+\renewcommand{\cal}[1]{\mathcal{#1}}
+\newcommand{\eps}{\varepsilon}
+\DeclareMathOperator{\Tr}{Tr}
+\usepackage{titling}
+
+\title{ShapeNorm Generative Model}
+\author{Kai Fox and Caleb Weinreb}
+\date{May 2023}
+
+\begin{document}
+
+\maketitle
+
+\section{ShapeNorm Modeling framework}
+\label{sec:model-fwk}
+
+ShapeNorm infers standardized pose representations on an idealized body by
+using a generative modeling framework to isolate the effects of behavior and
+body shape on keypoint observations. The framework consists of a \textit{pose
+model} that describes how frequently each animal inhabits each pose in the
+standardized space, and a \textit{morph model} that describes how poses in the standardized representation are related to keypoint observations of poses on specific animals.
+
+
+\subsection{Generative model}
+\label{sec:gen-model}
+
+We consider a dataset of poses $\{o_{n,t}\} \subset \mathbb{R}^{KD}$ measured during sessions $n=1,\dots,N$ at timepoints $t=1,\dots,T_n$ (the timepoints need not be sequential), where each pose contains coordinates of $K$ keypoints in $D_{\text{kp}}$ dimensions. Each session is associated with a body $b_n\in \cb{1,...,B}$ with $B\leq N$. Keypoints are first converted to egocentric coordinates, and gross differences in body size are minimized through uniform scaling of each animal. Aligned and scaled keypoints are then reduced by PCA obtain observation features $\{y_{n, t}\}\in \RR^D$, where the number of features $D$ is a hyperparameter of the method (see \ref{sec:hypers}).
+
+We model each pose observation $y_{n,t}$ as the animal-specific realization of a standardized pose $x_{n,t}$. Realizations of standardized poses on the body $b_n$ are given by the morph model, a map $f_\phi(\cdot; b_n)$ specified by latent parameters $\phi$. A reference session $n^*$ is chosen as the idealized shape and appropriate parameters are assigned a Dirac delta prior such that the morh map on $b_{n^*}$ is the identity. In all experiments, we use an affine map for the morph model to balance flexibility and degrees of freedom (see \ref{sec:morph}). Standardized poses $x_{n, t}$ are sampled from a pose model given by distributions $g_{\psi, n}$ specified by latent parameters $\psi$. In all experiments, we use a Gaussian mixture for the pose model with shared components across sessions but session-specific mixture weights are animal-specific to allow varied usage of a common repertoire of poses (see \ref{sec:pose}). The full ShapeNorm model used in our experiments is
+%
+\begin{align*}
+    y_{n,t} & = f_{\phi}(x_{n,t}; b_n)
+        && \text{(observations from standardized poses via morph model)} \\
+    x_{n,t} & \sim \NN(m_{z_{n,t}}, Q_{z_{n,t}}) 
+        && \text{(standardized pose given mixture component)}  \\
+    z_{n,t} & \sim \text{Cat}(\pi_n)  
+        && \text{(mixture component given animal-specific weights)} \\
+    Q_z & \sim \text{Wishart}^{-1}(\sigma^2_0 I, \nu_0) 
+        && \text{(prior on mixture covariances)} \\
+    \pi_n & \sim \text{Dir}(\alpha \beta)
+        && \text{(prior on session-specific mixture weights)} \\
+    \beta & \sim \text{Dir}(\gamma,\dots,\gamma)
+        && \text{(prior on mixture weight hyperparameters)}
+\end{align*}
+%
+where $z_{n, t}, m, Q, \pi, \beta$ are latent variables and parameters of the pose model and are described in more detail below. These and the morph parameters $\psi$, as well as the standardized poses $x_{n, t}$ are inferred using a Bayesian inference procedure based on expectation maximization. Standardized poses can be easily inferred using a previously fit ShapeNorm model by applying the inverse of $f$ in its first argument to new observation features.
+
+
+\subsection{Low-rank affine morph model}
+\label{sec:morph}
+
+ShapeNorm can be fit using 
+The affine morph model $f$ used in our experiments realizes standardized poses on a particular body by first adding a constant offset learned for that body to apply shape differences common to all poses such as a lengthened spine, then applying finer adjustments by adjusting realized poses along the first $J$ principal components of the chosen reference session data. The offsets and adjustments are constrained by a "stiffness" prior on the resulting maps that penalizes large changes in shape. The low-rank affine morph model therefore has hyperparameters $m\in \RR^D, U\in \RR^{J\times D}$ specifying the centroid and principal components of the idealized body distribution, as well as the variance of the identity prior $\sigma_{f}^2$. The latent parameters of the model are $\hat m_b\in \RR^D, \hat U_b\in \RR^{J\times D}$ that give the offsets and adjustments for each body. The morph map in terms of these parameters is written
+\begin{align*}
+    f_\psi(x; b_n) &= \bc{I + \hat{U}_{b_n} U^T} (x - m) + (m + \hat{m}_{b_n}).
+\end{align*}
+The identity prior on the morph map given for the dataset $\{y_{n, t}\}$ is
+\begin{align*}
+    p(\psi) = \mathcal{N}\left(
+        \frac{1}{\sum_{n}T_n} \sum_{n, t} \left|\left| f_\psi\inv(y_{n, t}; b_n) - y_{n, t} \right|\right|_2^2 \,;\,
+        0, \sigma_f^2
+    \right)
+\end{align*}
+where $f\inv$ is the inverse of $f$ in its first parameter. Offsets $\hat m_b$ are initialized according to the sample averages of observation features from sessions with body $b$. Adjustments $\hat U_b$ are initialized by fitting a ShapeNorm model with a pose model given by a single Gaussian with mean and covariance matching that of the reference session data. Because the pose model is fixed, this simplified ShapeNorm cannot isolate differences in covariance structure due to behavior and body shape, but it has no latent variables other than $\hat m_b, \hat U_b$ and therefore can be fit rapidly.
+
+
+
+
+\subsection{Gaussian mixture pose model}
+\label{sec:pose}
+
+We use a Gaussian mixture pose model to describe a shared repertoire of poses appearing to varying frequency in each session. The number of mixture components $L$ is chosen using a heuristic (see \ref{sec:hypers}). An inverse Wishart prior is assigned to the covariance matrices, and a hierarchical Dirichlet prior is used for session weights. The Gaussian mixture pose model has latent variables for a frame's component identity $z_{n, t}$, component means and covariances $m_l, Q_l$ with $l=1,...,L$, and session-specific component weights $\pi_n$ with $n=1,...N$ that were fit using expectation maximization, and shared component weights of the HDP $\beta$, all of which are fit during the expectation maximization procedure. The hyperparameters of the Gaussian mixture are the number of components $L$, the variance and d.o.f. of the inverse Wishart prior $\sigma_0^2, \nu_0$, and the parameters of the HDP $(\alpha, \gamma)$. Formally, the Gaussian mixture pose model is as given in \ref{sec:gen-model}.
+
+The latent variables are initialized by fitting a standard Gaussian mixture model to the reference session data $\{y_{n^{*}, t}:t=1,...,T_{n^*}\}$. Component means and covariances are set to match standard GMM, and $\beta$ as well as $\pi_{n}$ all sessions are set to match the weights of the standard GMM. Shared representations are initialized according to the morph model inverse $f\inv$ and component responsibilities $z_{n, t}$ are set using the MLE of the standard GMM evaluated at these initialized $x_{n, t}$.
+
+
+
+
+%
+\begin{align*}
+    y_{n,t} & = f(x_{n,t}, \phi_n) 
+        && \text{(observed pose given standardized pose)} \\
+    x_{n,t} & \sim \NN(m_{z_{n,t}}, Q_{z_{n,t}}) 
+        && \text{(standardized pose given mixture component)}  \\
+    z_{n,t} & \sim \text{Cat}(\pi_n)  
+        && \text{(mixture component given animal-specific weights)} \\
+    m_z & \sim \NN(m_0, \lambda_0^{-1} Q_z) 
+        && \text{(prior on mixture means given covariances)} \\
+    Q_z & \sim \text{Wishart}^{-1}(W_0, \nu_0) 
+        && \text{(prior on mixture covariances)} \\
+    \pi_n & \sim \text{Dir}(\beta)
+        && \text{(prior on animal-specific mixture weights)} \\
+    \beta & \sim \text{Dir}(\gamma,\dots,\gamma)
+        && \text{(prior on mixture weight hyperparameters)}
+\end{align*}   
+%
+where $f$ is a morph function that maps standardized poses $x_{n,t}$ to animal-specific poses $y_{n,t}$ and $\phi_n$ is a parameter vector that captures the unique shape of animal $n$. Several forms for $f$ (and priors on $\phi_n$) are described in Section XXX and tested in the paper. In general, $f$ should be invertible in its first argument and differentiable in its second. Abusing notation, we will use $f^{-1}$ to denote the inverse of $f$ in its first argument.
+
+
+\subsection{Calibrating hyperparameters}
+\label{sec:hypers}
+
+Many of the hyperparameters of ShapeNorm can require different settings depending on the data being modeled, so we designed methods to calibrate values of key hyperparameters given a dataset. The first such parameter is the number of feature dimensions $D$, which is set according to an explained-variance threshold of 98\% and verified against the reconstruction error in millimeters of keypoint observations from $D$-dimensional features. The second such parameter is the number of principal components of the idealized body adjusted by the morph map $J$, which is set using an explained-variance threshold of 95\%. The third such parameter was the number of components of the Gaussian mixture model $L$, which is chosen to maximize average cross-validated log-likelihood of standard Gaussian mixtures fit to individual sessions.
+
+Finally, the "stiffness" parameter $\sigma_f^2$ that determines the strength of the identity prior on the morph map is chosen using a scan procedure. To perform the scan, a ShapeNorm is fit with unique body assignments for each session ($B = N$ and $b_n = n$ for all $n$). Sessions already assigned a unique body are split in half and each half is assigned a unique body. Let $R(y)$ is the reconstruction of keypoint data from observation features. The quantity
+\begin{align*}
+    d_{n,n'} = \frac{1}{T_{n^*}}\sum_{t=1}^{T_{n^*}} \left|\left| R(f_\psi(x_{n^*, t}; b_n)) - R(f_\psi(x_{n^*, t}; b_{n'})) \right|\right|_2^2
+\end{align*}
+for sessions $n, n'$ that were originally assigned the same body is then used to measure the difference between morph map parameters learned for animals known to have the same body shape. This difference tends to increase as the stiffness prior becomes weaker. The selected value of $\sigma_f^2$ is the weakest prior yielding average $d_{n, n'}$ less than an acceptable error threshold (1mm for our experiments).
+
+
+
+
+\end{document}
