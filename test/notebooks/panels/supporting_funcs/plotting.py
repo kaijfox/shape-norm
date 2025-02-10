@@ -262,3 +262,68 @@ def plotdrop(
                 dropax,
                 **drop_kws(".9", sm * 7, 1 * lsm, arms, {}),
             )
+
+
+_plotdrop_kws = lambda c, ps, ls, arms: dict(
+    armature=arms,
+    elev=30,
+    rot=-70,
+    colors=np.array([c] * arms.n_kpts) if np.array(c).ndim < 2 else c,
+    point_size=ps,
+    line_size=ls,
+    boundary=False,
+)
+_dropz = lambda x, z: np.concatenate(
+    [x[:, :2], np.broadcast_to(x[..., 2].min() + z, x.shape[:-1] + (1,))],
+    axis=-1,
+)
+_dropy = lambda x, y: np.concatenate(
+    [
+        x[:, :1],
+        np.broadcast_to(x[..., 1].max() + y, x.shape[:-1] + (1,)),
+        x[:, 2:],
+    ],
+    axis=-1,
+)
+_dropx = lambda x, xx: np.concatenate(
+    [np.broadcast_to(x[..., 0].min() + xx, x.shape[:-1] + (1,)), x[:, 1:]],
+    axis=-1,
+)
+
+
+def _plotdrop(
+    f,
+    a,
+    c,
+    sm=1,
+    lsm=1,
+    shad=True,
+    dropax=None,
+    shad_x=True,
+    shad_y=True,
+    shad_z=True,
+    arms=None,
+    **kws,
+):
+    """Similar to plotdrop with slightly different control over arguments"""
+    plot_mouse_3d(f, a, **{**_plotdrop_kws(c, sm * 15, 1.5 * lsm, arms), **kws})
+    dropax = dropax if dropax is not None else a
+    if shad:
+        if shad_z:
+            plot_mouse_3d(
+                _dropz(f, -7),
+                dropax,
+                **_plotdrop_kws(".9", sm * 7, 1 * lsm, arms),
+            )
+        if shad_y:
+            plot_mouse_3d(
+                _dropy(f, 10),
+                dropax,
+                **_plotdrop_kws(".9", sm * 7, 1 * lsm, arms),
+            )
+        if shad_x:
+            plot_mouse_3d(
+                _dropx(f, -7),
+                dropax,
+                **_plotdrop_kws(".9", sm * 7, 1 * lsm, arms),
+            )

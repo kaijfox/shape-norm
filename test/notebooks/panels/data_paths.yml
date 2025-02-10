@@ -1,18 +1,19 @@
 root: /Users/kaifox/projects/mph/data_explore
 
-mouse_ont_keypoints:
-  path: data
-  metadata_file: meta.csv
+mouse_ont_keypoints: data
+mouse_ont_keypoint_metadata: data/meta.csv
+mouse_ont_supervised_bouts: data/moont_scalar-classifier-behaviors.p
+mouse_ont_supervised_ethogram: data/moont_scalar-classifier-behaviors.p
+mouse_ont_shapenorm: ../generative_api/test/projects/o2-ont/fit04-2_indiv-bodies_gmm10
 
-mouse_blscale_keypoints:
-  path: testsets/blscale-arrays
 
-mouse_ont_supervised_ethogram:
-  path: data/moont_scalar-classifier-behaviors.p
+mouse_blscale_scale_meta: testsets/blscale-dicts
+mouse_blscale_scaled_keypoints: testsets/blscale-arrays
+mouse_blscale_moseq: testsets/kpms-blscale-script-results/blscale-arrays
+mouse_blscale_shapenorm: ../generative_api/test/projects/o2-blscale/fit05-1_all-animals_lowpc
 
-mouse_blscale_moseq:
-  path: testsets/blscale-script-projects
 
-mouse_ont_moseq:
-  path: testsets/ont-script-projects
+
+
+
 
