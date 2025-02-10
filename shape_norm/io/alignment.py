@@ -165,6 +165,9 @@ class sagittal(AlignmentMethod):
         -------
         dataset : Dataset
         """
+
+        ndim = dataset.data.shape[-1]
+
         if config["rescale"] and scale:
             aligned = _inverse_align_scales(dataset, align_meta["scale"])
         else:
@@ -173,7 +176,13 @@ class sagittal(AlignmentMethod):
         R = Rotation.from_rotvec(
             (align_meta["angle"][:, None]) * np.array([0, 0, 1])[None, :]
         ).as_matrix()
-        rotated = (R[:, None] @ aligned.data[..., None])[..., 0]
+        R = R[:, :2, :2]
+        
+        rotated_xy = (R[:, None] @ aligned.data[..., :2, None])[..., 0]
+        if ndim == 2:
+            rotated = rotated_xy
+        else:
+            rotated = np.concatenate([rotated_xy, aligned.data[..., 2:]], axis=-1)
         uncentered = rotated + align_meta["centroid"]
         return dataset.update(uncentered)
 
