@@ -116,6 +116,8 @@ class sagittal(AlignmentMethod):
             respectively, and "scale", an array of shape (n_sessions,).
         """
 
+        ndim = dataset.data.shape[-1]
+
         # center hips/back or origin-keypt on (0,0,0)
         com = dataset.data[:, [dataset.aux["keypoint_ids"][config["origin"]]]]
         centered = dataset.data - com
@@ -130,7 +132,12 @@ class sagittal(AlignmentMethod):
         R = Rotation.from_rotvec(
             (-theta[:, None]) * np.array([0, 0, 1])[None, :]
         ).as_matrix()
-        rotated = (R[:, None] @ centered[..., None])[..., 0]
+        R = R[:, :2, :2]
+        rotated_xz = (R[:, None] @ centered[..., :2, None])[..., 0]
+        if ndim == 2:
+            rotated = rotated_xz
+        else:
+            rotated = np.concatenate([rotated_xz, centered[..., 2:]], axis=-1)
         aligned = dataset.update(data=rotated)
 
         if config["rescale"]:
