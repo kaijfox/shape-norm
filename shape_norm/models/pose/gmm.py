@@ -135,8 +135,8 @@ def calibrate_base_model(
             )
 
     else:
-        ns = [n_components]
-        scores = [0]
+        ns = jnp.array([n_components])
+        scores = jnp.array([0])
         selected_ix = 0
         selected_n = n_components
 
